@@ -67,6 +67,49 @@ async def test_consolidation_captures_execution_off_loop(tmp_path, monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["temporary", "incognito", "persistent"])
+async def test_consolidate_honors_the_transcript_header_mode(tmp_path, caplog, mode):
+    """The memory-mode choke point every entry point inherits.
+
+    A session with no execution record still carries its mode in the transcript
+    header. ``_consolidate`` must refuse a temporary or incognito header before
+    the model is called or any offset moves -- and say so at debug, so a skip is
+    distinguishable from a pass -- while a persistent header consolidates exactly
+    as before.
+    """
+    import logging
+
+    from kiro_crew.history_consolidation import _CONSOLIDATION_REFUSED
+
+    log = _seed_log(tmp_path)
+    with history_mod.allow_on_loop_persist():
+        log.update_metadata(KEY, {"memory_mode": mode})
+    c = _make_consolidator(log)
+    c._call_llm = AsyncMock(return_value={"history_entry": "x"})
+
+    with caplog.at_level(logging.DEBUG, logger="kiro_crew.history"):
+        result = await asyncio.wait_for(c._consolidate(KEY, include_history=True), 10)
+
+    if mode == "persistent":
+        assert result is None
+        c._call_llm.assert_awaited_once()
+        assert log.unconsolidated_count(KEY) == 0
+        return
+    assert result is _CONSOLIDATION_REFUSED
+    c._call_llm.assert_not_awaited()
+    assert log.unconsolidated_count(KEY) == 3
+    assert log.get_metadata(KEY).get("last_consolidated", 0) == 0
+    assert KEY not in c._running
+    skipped = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "consolidation skipped" in r.getMessage()
+    ]
+    assert skipped, f"a {mode} refusal left no debug trace:\n{caplog.text}"
+    assert KEY in skipped[0].getMessage() and mode in skipped[0].getMessage()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("version", "seed_source", "assistant_value"),
     (

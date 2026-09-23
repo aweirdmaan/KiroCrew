@@ -378,7 +378,13 @@ Idle detection: `_last_activity[key]` updated on every `maybe_consolidate()` cal
 
 **Both paths write to the session's captured store.** `_consolidate` captures the
 canonical execution context before its first await and refuses incognito or
-temporary sessions before reading their transcripts. V2 uses that context's exact
+temporary sessions before reading their transcripts -- from the execution record
+or, for a session that carries its mode only in the transcript header's
+`memory_mode`, from that header -- and logs the skip at debug so a refusal is
+distinguishable from a pass. This is the memory-mode choke point every entry
+point inherits (idle sweep, `maybe_consolidate`, expiry sweep, dashboard trigger,
+CLI); the dashboard trigger adds its own target-side 403 in front of it (see the
+route table below). V2 uses that context's exact
 member store and commits learned records, history and the retry receipt in one
 SQLite transaction. V1 retains `context.store_of_session(log, key)` and its
 Markdown and lesson fallback behavior. See [Memory across surfaces and channels](#memory-across-surfaces-and-channels).
@@ -2261,7 +2267,7 @@ before reading transcript bodies, opening learned memory or billing a model.
 | POST | `/api/memory/migrate` | Migrate markdown → structured memory (gated) |
 | POST | `/api/memory/import` | Import from JSON export (gated) |
 | POST | `/api/memory/promote` | Promote repeated episodic patterns to semantic facts, tombstoning the rows folded in (gated) |
-| POST | `/api/memory/consolidate` | Trigger consolidation for one session (restricted-mode check only) |
+| POST | `/api/memory/consolidate` | Trigger consolidation for one session. Gated on the caller like every write, and additionally on the TARGET: the body's `key` is resolved through `resolve_session_memory_mode` (live slot first, then the persisted execution record and transcript header) and a temporary or incognito target is 403 `restricted_target_session` before the running claim or any transcript read. An unresolvable target mode proceeds, because `_consolidate` re-reads the mode of the exact transcript it consolidates and refuses on it |
 | GET | `/api/memory/context-preview?q=` | Preview injected semantic + episodic context |
 | GET | `/api/memory/observability?q=` | `stats` + `rejections` + `context_preview`, plus `reads` — the read-volume counters (see above). `reads` is resolved LAST, so it INCLUDES the reads this request itself performed; that is what lets a caller issue the same `q` twice and compare the two objects |
 | GET | `/api/memory/recall?q=` | V2 task recall with evidence. Explicit `store` requires the dashboard owner; the authenticated MCP path uses the owning session's canonical execution context and requires memory reads to be allowed. Invalid or unavailable member memory returns an explicit error |

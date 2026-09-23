@@ -169,7 +169,11 @@ Kiro Crew automatically consolidates conversations into memory:
 - **Preferences/projects**: every 30 messages per session
 - **Daily history + lessons**: after 3 hours idle per session
 
-No manual action needed — it happens in the background.
+No manual action needed — it happens in the background. The manual trigger
+(Overview → Memory tab → Consolidate, or `POST /api/memory/consolidate`) refuses
+an Incognito or Temporary session with a 403 no matter which session triggers it,
+and the background paths skip those sessions, so the mode table above holds for
+every route.
 
 ## Reading Memory Programmatically
 

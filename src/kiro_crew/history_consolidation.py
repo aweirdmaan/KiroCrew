@@ -925,12 +925,32 @@ class HistoryConsolidator:
             from kiro_crew.execution_context import read_session_execution
             from kiro_crew.history import is_incognito_transcript
 
+            # Memory-mode choke point. Every entry point -- the idle sweep,
+            # maybe_consolidate, the expiry sweep, the dashboard trigger and
+            # the CLI -- funnels through here, so a temporary or incognito
+            # session is refused before its transcript is read even when a
+            # caller carries no target-side check of its own. Two
+            # sources, because a session records its mode in one or the other:
+            # the execution record (live registry or persisted carrier) and the
+            # transcript header's ``memory_mode``. Logged at debug rather than
+            # silently: the skip is expected for such a session, but a refusal
+            # that leaves no trace is indistinguishable from a pass that did.
             execution = await asyncio.to_thread(read_session_execution, key)
             if execution is not None and execution.memory_mode != "persistent":
+                self._logger.debug(
+                    "consolidation skipped for %s: %s session (execution record)",
+                    key,
+                    execution.memory_mode,
+                )
                 return _CONSOLIDATION_REFUSED
 
             metadata = await asyncio.to_thread(self._log.get_metadata, key)
             if isinstance(metadata, dict) and is_incognito_transcript(metadata.get("memory_mode")):
+                self._logger.debug(
+                    "consolidation skipped for %s: %s session (transcript header)",
+                    key,
+                    metadata.get("memory_mode"),
+                )
                 return _CONSOLIDATION_REFUSED
             # Atomically snapshot the unconsolidated tail, the total message
             # count (the absolute offset handed to mark_consolidated below), and
