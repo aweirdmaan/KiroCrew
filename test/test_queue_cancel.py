@@ -16,6 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew.dashboard.chat import api_chat_slot_queue_cancel
+from kiro_crew.dashboard.slot_queue_repository import ORIGIN_PROOF_META_KEY, dashboard_origin_proof
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 
 # ── Unit tests: _ChatSlot queue helpers ──
@@ -28,7 +29,13 @@ class TestQueueHelpers:
         assert isinstance(qid, str)
         assert len(qid) == 12
         assert len(slot._queue) == 1
-        assert slot._queue[0] == {"id": qid, "content": "hello", "kind": ""}
+        # Every entry the gateway accepts as dashboard text carries its origin proof.
+        assert slot._queue[0] == {
+            "id": qid,
+            "content": "hello",
+            "kind": "",
+            "meta": {ORIGIN_PROOF_META_KEY: dashboard_origin_proof("s1", qid, "hello")},
+        }
 
     def test_queue_append_unique_ids(self):
         slot = _ChatSlot("s1")
@@ -48,7 +55,12 @@ class TestQueueHelpers:
         slot = _ChatSlot("s1")
         qid = slot.queue_append("msg")
         item = slot.queue_pop(0)
-        assert item == {"id": qid, "content": "msg", "kind": ""}
+        assert item == {
+            "id": qid,
+            "content": "msg",
+            "kind": "",
+            "meta": {ORIGIN_PROOF_META_KEY: dashboard_origin_proof("s1", qid, "msg")},
+        }
         assert len(slot._queue) == 0
 
     def test_queue_pop_fifo(self):

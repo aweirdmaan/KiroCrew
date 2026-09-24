@@ -17,6 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew.dashboard.chat import api_chat_slot_queue_edit
 from kiro_crew.dashboard.chat_utils import _edit_queued_by_id
+from kiro_crew.dashboard.slot_queue_repository import ORIGIN_PROOF_META_KEY, dashboard_origin_proof
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 
 # ── Unit tests: _ChatSlot.queue_edit_by_id ──
@@ -62,8 +63,19 @@ class TestQueueEditHelper:
         id1 = slot.queue_append("same")
         id2 = slot.queue_append("same")
         slot.queue_edit_by_id(id2, "changed")
-        assert slot._queue[0] == {"id": id1, "content": "same", "kind": ""}
-        assert slot._queue[1] == {"id": id2, "content": "changed", "kind": ""}
+        assert slot._queue[0] == {
+            "id": id1,
+            "content": "same",
+            "kind": "",
+            "meta": {ORIGIN_PROOF_META_KEY: dashboard_origin_proof(slot.key, id1, "same")},
+        }
+        # The edit re-signs the words: the proof is over the content.
+        assert slot._queue[1] == {
+            "id": id2,
+            "content": "changed",
+            "kind": "",
+            "meta": {ORIGIN_PROOF_META_KEY: dashboard_origin_proof(slot.key, id2, "changed")},
+        }
 
     @pytest.mark.parametrize(
         "callback_name",
@@ -272,10 +284,16 @@ class TestQueueEditEndpoint:
                 )
                 assert resp.status == 200
 
-        assert slot._queue[0] == {"id": id1, "content": "same", "kind": ""}
+        assert slot._queue[0] == {
+            "id": id1,
+            "content": "same",
+            "kind": "",
+            "meta": {ORIGIN_PROOF_META_KEY: dashboard_origin_proof(slot.key, id1, "same")},
+        }
         assert slot._queue[1] == {
             "id": id2,
             "content": "edited",
             "kind": "",
             "_directive_user_origin": True,
+            "meta": {ORIGIN_PROOF_META_KEY: dashboard_origin_proof(slot.key, id2, "edited")},
         }

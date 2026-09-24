@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import uuid
@@ -67,6 +68,115 @@ MAX_DURABLE_QUEUE_SCAN = 4 * MAX_DURABLE_QUEUE_ENTRIES
 #: be readable as "unknown" rather than as "the person's", and this key is what a
 #: consumer asks instead of trying to tell the two apart from the actor alone.
 RESTORED_QUEUE_KEY = "_restored_from_disk"
+
+#: Queue-entry ``meta`` key carrying the gateway's own attestation that it
+#: enqueued this entry as DASHBOARD-origin text -- the composer, an app, a
+#: recovery of a dashboard turn -- and not as text a channel conversation handed
+#: off. It is the one provenance a restored entry may carry across a restart,
+#: because it is the one provenance a restart cannot forge: an HMAC over the slot
+#: key, the queue id and the content, keyed from the gateway's fenced signing
+#: secret (``token_signing.key``, which no agent file tool can read or write),
+#: under its own domain tag so a queue proof is never also a valid auth token.
+#:
+#: The rule it serves is DEFAULT DENY. A restored entry carries no command
+#: authority: the drain treats it as channel text -- no composer command word,
+#: a leading ``/workflow`` refused with the usual notice -- unless this proof
+#: verifies against the entry as it stands. So a persisted channel hand-off can
+#: be edited in any way an editor likes (its channel stamps removed, its content
+#: rewritten) and comes back as prose, because nothing an editor can write
+#: produces a valid proof; a dashboard entry keeps its command word through a
+#: restart because its proof rides its ``meta`` and still verifies; and a
+#: dashboard entry whose content was rewritten on disk, or whose proof was
+#: transplanted from another entry or another slot, comes back as prose too.
+#: Compare :data:`RESTORED_QUEUE_KEY`: that key says the entry was restored,
+#: this one says what the gateway knew about it when it was accepted.
+ORIGIN_PROOF_META_KEY = "origin_proof"
+
+#: Domain separation for the proof key: the signing secret also signs dashboard
+#: access and refresh tokens, so the queue proof is computed under a key DERIVED
+#: from it for this purpose alone.
+_ORIGIN_PROOF_DOMAIN = b"kirocrew.dashboard.queue-origin-proof.v1"
+_ORIGIN_PROOF_KEY: bytes | None = None
+
+
+def _origin_proof_key() -> bytes:
+    """The derived proof key, computed once per process from the fenced secret.
+
+    ``token_secret._get_secret`` never raises: a home it cannot write falls back
+    to a per-process random secret, under which proofs still verify within the
+    process and simply fail after a restart -- the fail-closed direction, since an
+    unverifiable restored entry is prose.
+    """
+    global _ORIGIN_PROOF_KEY
+    if _ORIGIN_PROOF_KEY is None:
+        # Local import: the dashboard package imports this module early, and the
+        # secret must stay lazy (importing must never write ``token_signing.key``).
+        from kiro_crew.dashboard.token_secret import _get_secret
+
+        _ORIGIN_PROOF_KEY = hmac.new(_get_secret(), _ORIGIN_PROOF_DOMAIN, hashlib.sha256).digest()
+    return _ORIGIN_PROOF_KEY
+
+
+def dashboard_origin_proof(slot_key: str, queue_id: str, content: str) -> str:
+    """The proof the gateway stamps on a dashboard-origin entry of *slot_key*.
+
+    Length-prefixed fields, so no choice of slot key, id or content can be read
+    as another split of the same bytes.
+    """
+    parts = (slot_key, queue_id, content)
+    message = "".join(f"{len(part)}:{part}" for part in parts).encode("utf-8", "surrogatepass")
+    return hmac.new(_origin_proof_key(), message, hashlib.sha256).hexdigest()
+
+
+def dashboard_origin_proven(slot_key: str, entry: Any) -> bool:
+    """Whether *entry* carries a proof the gateway itself stamped for *slot_key*.
+
+    False for anything that is not exactly a proof over the entry as it stands:
+    a missing or non-string tag, a rewritten content, a transplanted proof, a
+    proof from another slot. Constant-time comparison; never raises.
+    """
+    if not isinstance(entry, dict):
+        return False
+    meta = entry.get("meta")
+    tag = meta.get(ORIGIN_PROOF_META_KEY) if isinstance(meta, dict) else None
+    entry_id = entry.get("id")
+    content = entry.get("content")
+    if not isinstance(tag, str) or not isinstance(entry_id, str) or not isinstance(content, str):
+        return False
+    try:
+        expected = dashboard_origin_proof(slot_key, entry_id, content)
+    except Exception:  # pragma: no cover - the secret loader never raises
+        return False
+    return hmac.compare_digest(expected, tag)
+
+
+def _stamp_origin(owner: Any, item: dict[str, Any], *, directive_channel_origin: bool) -> None:
+    """Stamp (or, for channel text, withhold) the dashboard-origin proof on *item*.
+
+    Called at every point the repository accepts or rewrites an entry, because
+    the proof is over the content: an edit that changes the words must re-sign
+    them, and an edit that turns the entry into channel text must drop the proof
+    it is not due. Mutates ``item["meta"]`` in place, creating it when
+    a proof is due and there is none.
+    """
+    meta = item.get("meta")
+    if directive_channel_origin:
+        if isinstance(meta, dict):
+            meta.pop(ORIGIN_PROOF_META_KEY, None)
+        return
+    if not _is_durable_queue_entry(item):
+        # Only an entry a restart can hand back needs a proof; a cron notice, a
+        # recovery payload or a callback-bearing entry dies with its process.
+        return
+    if not isinstance(meta, dict):
+        meta = {}
+        item["meta"] = meta
+    meta[ORIGIN_PROOF_META_KEY] = dashboard_origin_proof(
+        str(getattr(owner, "key", "") or ""),
+        str(item.get("id") or ""),
+        str(item.get("content") or ""),
+    )
+
 
 _DURABLE_QUEUE_KEYS: tuple[str, ...] = (
     "id",
@@ -279,7 +389,13 @@ def sanitize_restored_queue(raw: object) -> list[dict[str, Any]]:
     directive is admitted under, and this line is an ordinary writable file — a
     carried flag would be authority granted to whoever edited it. The writer does
     not emit them either (:data:`_DURABLE_QUEUE_KEYS`); dropping them here is the
-    reader's half of the same rule, so a hand-added flag buys nothing.
+    reader's half of the same rule, so a hand-added flag buys nothing. The one
+    provenance that DOES ride ``meta`` through the round trip is the gateway's
+    own dashboard-origin proof (:data:`ORIGIN_PROOF_META_KEY`), and it is left in
+    place precisely because it cannot be written by hand: the drain verifies it
+    against the entry as restored, and a restored entry gets the composer's
+    command word ONLY when it verifies. Absent, forged, transplanted or
+    outlived by an edit to the content, the entry drains as prose.
 
     ``meta``'s admission-time containment snapshot goes the same way, and the
     asymmetry there is sharper still. The drain's re-check
@@ -314,6 +430,7 @@ def sanitize_restored_queue(raw: object) -> list[dict[str, Any]]:
         return []
     # Local import: session_control reaches this module through state, so taking
     # the key at module level would close an import cycle.
+    from kiro_crew.dashboard.channel_busy import CHANNEL_ORIGIN_META_KEY
     from kiro_crew.dashboard.chat_delivery import TURN_ACTOR_META_KEY
     from kiro_crew.dashboard.session_control import (
         QUEUED_CONTAINMENT_META_KEY,
@@ -397,6 +514,16 @@ def sanitize_restored_queue(raw: object) -> list[dict[str, Any]]:
             # itself still survives -- which is what putting the stamp in
             # ``meta`` rather than a consumption callback buys, since a
             # callback-carrying entry is not persisted at all.
+            #
+            # The CHANNEL CONVERSATION stamp (``channel_busy``) goes for the
+            # same reason and names a write target of the same kind: the drain
+            # resolves the recipient of its channel drop notice from this key
+            # alone and sends to whatever allow-listed conversation it names,
+            # from a slot that need never have been bound to it. Nothing in the
+            # entry can attest to the binding, so the key is worth what the file
+            # is worth. The cost is the same one notice, and the entry drains as
+            # an unstamped one: not a channel hand-off any more, so a released
+            # binding neither drops it nor reports it.
             entry["meta"] = {
                 k: v
                 for k, v in meta.items()
@@ -405,6 +532,7 @@ def sanitize_restored_queue(raw: object) -> list[dict[str, Any]]:
                     QUEUED_CONTAINMENT_META_KEY,
                     TURN_ACTOR_META_KEY,
                     SEND_ORIGIN_META_KEY,
+                    CHANNEL_ORIGIN_META_KEY,
                 )
             }
         try:
@@ -578,6 +706,7 @@ class SlotQueueRepository:
             item["_directive_user_origin"] = True
         if directive_channel_origin:
             item["_directive_channel_origin"] = True
+        _stamp_origin(owner, item, directive_channel_origin=directive_channel_origin)
         owner._queue.append(item)
         owner._note_enqueue()
         return queue_id
@@ -621,6 +750,7 @@ class SlotQueueRepository:
             item["_directive_user_origin"] = True
         if directive_channel_origin:
             item["_directive_channel_origin"] = True
+        _stamp_origin(owner, item, directive_channel_origin=directive_channel_origin)
         owner._queue.insert(index, item)
         owner._note_enqueue()
         return queue_id
@@ -701,6 +831,7 @@ class SlotQueueRepository:
                 item["_directive_channel_origin"] = True
             else:
                 item.pop("_directive_channel_origin", None)
+            _stamp_origin(owner, item, directive_channel_origin=directive_channel_origin)
             return True
         return False
 
