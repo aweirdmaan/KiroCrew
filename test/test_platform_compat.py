@@ -490,6 +490,54 @@ class TestProcessHelpers:
                 child.kill()
                 child.wait()
 
+    def test_pid_is_zombie_reads_the_running_state_of_self(self):
+        # A running process is not a zombie on the platforms that expose the
+        # state (Linux /proc, macOS kinfo); elsewhere the answer is "unknown".
+        expected = False if sys.platform in ("linux", "darwin") else None
+        assert pc.pid_is_zombie(os.getpid()) is expected
+
+    def test_pid_is_zombie_is_unknown_for_an_unreadable_or_invalid_pid(self):
+        assert pc.pid_is_zombie(0) is None
+        assert pc.pid_is_zombie(-1) is None
+        if sys.platform == "linux":
+            # No /proc entry: unreadable, not "not a zombie".
+            assert pc.pid_is_zombie(2_000_000_000) is None
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="reads the Linux /proc stat state field")
+    def test_pid_is_zombie_reads_the_linux_stat_state_field(self, monkeypatch):
+        # The comm field is parenthesised and may itself contain spaces and
+        # parentheses, so the state is the first field after the LAST ')'.
+        tail = " ".join(str(i) for i in range(4, 24))
+        seen: list[str] = []
+
+        def _stat_path(text: str):
+            class _FakeStatPath:
+                def __init__(self, path):
+                    seen.append(str(path))
+
+                def read_text(self, *args, **kwargs):
+                    return text
+
+            return _FakeStatPath
+
+        monkeypatch.setattr(pc.sys, "platform", "linux")
+        for state, expected in (("Z", True), ("X", True), ("S", False), ("R", False)):
+            monkeypatch.setattr(
+                pc, "Path", _stat_path(f"4242 (kiro (cli) worker) {state} 1 {tail}")
+            )
+            assert pc.pid_is_zombie(4242) is expected, state
+        assert seen == ["/proc/4242/stat"] * 4
+
+        class _Unreadable:
+            def __init__(self, _p):
+                pass
+
+            def read_text(self, *args, **kwargs):
+                raise PermissionError("[Errno 13] Permission denied")
+
+        monkeypatch.setattr(pc, "Path", _Unreadable)
+        assert pc.pid_is_zombie(4242) is None
+
     def test_get_ppid_returns_int(self):
         # Returns the parent (>0 normally) or -1 on failure — never raises.
         ppid = pc.get_ppid(os.getpid())

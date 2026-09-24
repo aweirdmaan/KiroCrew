@@ -6143,6 +6143,35 @@ def pid_exists(pid: int) -> bool:
         return False
 
 
+def pid_is_zombie(pid: int) -> bool | None:
+    """Whether *pid* has exited and only waits to be reaped: True / False, None when unreadable.
+
+    ``pid_exists`` answers True for a zombie (``os.kill(pid, 0)`` reaches it),
+    so a caller asking "is this process still RUNNING" -- a survivor check
+    after a signal, where the signalled process sits in the zombie state until
+    its parent, or init, collects it -- needs this beside it. Linux reads the
+    state field of ``/proc/<pid>/stat`` (``Z``, or ``X`` for one being torn
+    down); macOS asks the kernel (:func:`darwin_pid_is_zombie`); elsewhere, and
+    for a process that cannot be read, None -- the caller decides what
+    "unknown" means for it. Never signals anything.
+    """
+    if pid <= 0:
+        return None
+    if sys.platform == "linux":
+        try:
+            stat_data = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        close_paren = stat_data.rfind(")")
+        fields = stat_data[close_paren + 2 :].split() if close_paren >= 0 else []
+        if not fields:
+            return None
+        return fields[0] in ("Z", "X", "x")
+    if sys.platform == "darwin":
+        return darwin_pid_is_zombie(pid)
+    return None
+
+
 #: Seconds before the ``ps`` start-time probe is abandoned. Only the BSD leg
 #: spawns anything; Linux reads /proc and Windows calls the kernel directly.
 _START_TIME_PS_TIMEOUT = 2

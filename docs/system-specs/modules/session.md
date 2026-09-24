@@ -2701,6 +2701,56 @@ the day it lands rather than waiting to be added to a list. A container that
 merely shares the attribute name can be exempted with a stated reason, and the
 exemption self-voids if that module ever starts writing breadcrumbs.
 
+**`reset` keeps the popped session readable for exactly the life of its teardown.**
+The pop happens under the registry lock before the awaits that can hang (the end
+record, the unlink, the child probes, the provider shutdown), so from the pop to
+the end of the teardown the live map does not name the process the teardown holds.
+A reader that must still reach that process — the cron reaper, when a run's OWN
+`finally` reset popped the session and then hung, the ordinary shape of a run that
+hangs in its teardown — reads `SessionManager.tearing_down(key)`. The facade opens
+a `_TeardownScope` around every `reset`; `SessionLifecycleService.reset` records
+the popped session into it in the same lock hold as the pop, and the scope's exit
+releases the entry however the call ends (return, a deferred shutdown error, a
+cancellation landing on the hung shutdown). Bounded: one entry per key, held by
+the FIRST teardown to pop under that key until it ends — a later reset that pops
+a successor registered under the same key records nothing, because the successor
+is not the process the earlier teardown holds, and its scope releases nothing it
+did not record. A caller that must know exactly which session ITS reset popped opens the scope itself (`SessionManager.teardown_scope(on_pop=...)`, passed to `reset` as `scope`): `on_pop` runs in the same lock hold as the pop and `scope.popped` names that session past the release -- what the cron reaper reads to take the handle of the process a timed-out reset holds. A `SessionLifecycleService.reset` called without a scope records
+nothing; the facade is the caller that opens one. `test_session.py::
+TestResetRetainsTheTornDownSession` pins the entry's life; the cron module spec
+records what the reaper does with it.
+
+**A key whose run is being ended admits nothing: the per-key ending fence.**
+`SessionManager.ending_key(key)` is a context manager, the per-key sibling of the
+manager-wide `_closing` check, held by a caller that is ending a run and about to
+record it (the cron reaper, `cancel()`) around its reset-then-kill passes. It
+raises synchronously on entry (`SessionAllocationService.begin_ending`, before the
+holder's first await) and lifts however the block ends (`end_ending`). While it is
+up, a claim or a cold start under the key is refused with `SessionEndingError` at
+every door of `get_or_create` — the reservation take, the claim of a live session,
+the cold start before it spawns, the registration after `provider.start()` — and
+at the entry of `open_task_session`, the other publication door. The doors are
+not the whole rule: `get_or_create` takes its allocation reservation and then
+awaits `provider.start()` BEFORE publishing into the map, so a cold start caught
+inside `start()` when the fence goes up has published nothing the holder's passes
+could see. `begin_ending` therefore INVALIDATES every reservation in flight under
+the key at that moment (`SessionRegistryState.invalidated_reservations`, keyed by
+the reservation token `get_or_create` threads into `_get_or_create_impl`): that
+call is refused at its registration door when its start returns, fence up or
+lifted, and the provider it started is hard-killed by the same `except
+BaseException` path a closing manager uses; the invalidation lives exactly as long
+as the reservation (dropped in `_remove_reservation_now`). A reservation taken
+after the fence lifts is a new life under the key and is not invalidated.
+`SessionManager.allocation_in_flight(key)` is the public read of a reservation
+still held under the key — what the holder reads after its passes to name a start
+it did not itself answer. `open_task_session` holds no reservation, so a per-step
+create already in flight is gated only while the fence is up; the ending caller's
+post-pass read of the key is the net for that. Additive to the allocation-boundary
+predecessor capture: new state fields, new methods, and door checks as separate
+statements. `test_session.py::TestTheEndingFenceAdmitsNothingUnderTheKey` pins the
+doors, the in-flight invalidation with the hard kill, the lift, and the task-session
+door; the cron module spec records what the reaper does with the fence.
+
 ## Security: PreToolUse Command Enforcement
 
 Command denial is enforced by Kiro Crew's bundled `hooks.py` `PreToolUse` gate,

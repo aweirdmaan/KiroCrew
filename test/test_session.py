@@ -22,6 +22,7 @@ from kiro_crew.session import (
     _BG_BLIND_RECYCLE_PROMPTS,
     BACKGROUND_KEY,
     SessionClosingError,
+    SessionEndingError,
     SessionManager,
 )
 
@@ -1958,6 +1959,310 @@ class TestRelease:
         second.cancel()
         session_2.semaphore.release()
         await mgr.close_all()
+
+
+class TestResetRetainsTheTornDownSession:
+    """``reset`` keeps the popped session readable for exactly the life of its teardown.
+
+    The pop happens under the registry lock before the awaits that can hang, so
+    from then on the live map does not name the process the teardown holds. A
+    reader that must still reach it -- the cron reaper, after a run's own finally
+    reset popped the session and hung -- reads ``tearing_down(key)``. The entry is
+    recorded at the pop and released when the reset ends, however it ends.
+    """
+
+    @staticmethod
+    def _hang_shutdown(provider):
+        gate = asyncio.Event()
+
+        async def _hung():
+            await gate.wait()
+
+        provider.shutdown = AsyncMock(side_effect=_hung)
+        return gate
+
+    @staticmethod
+    async def _until_the_shutdown_hangs(mgr, key, provider):
+        """Wait until the teardown has popped the session and entered the hung shutdown.
+
+        The cancel below has to land IN the shutdown: a cancellation that lands one
+        await earlier, at ``record_session_ended``'s crumb hop, is absorbed by
+        design (the pop is the point of no return, so the teardown runs on) -- and a
+        teardown that runs on into a hung shutdown keeps its entry, correctly.
+        """
+        for _ in range(400):
+            if not mgr.has_session(key) and provider.shutdown.await_count:
+                return
+            await asyncio.sleep(0.005)
+        raise AssertionError(f"the teardown of {key} never reached the provider shutdown")
+
+    @pytest.mark.asyncio
+    async def test_the_popped_session_is_readable_while_its_teardown_runs_and_gone_after(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        assert mgr.tearing_down("k1") is None, "no teardown is in flight yet"
+        self._hang_shutdown(provider)
+
+        teardown = asyncio.create_task(mgr.reset("k1"))
+        await self._until_the_shutdown_hangs(mgr, "k1", provider)
+
+        torn = mgr.tearing_down("k1")
+        assert torn is not None and torn.provider is provider
+        assert not mgr.has_session("k1")
+
+        # The teardown is cancelled out from under its hung shutdown (the reaper's
+        # cancel of a run task lands exactly here): the entry goes with it.
+        teardown.cancel()
+        await asyncio.gather(teardown, return_exceptions=True)
+        assert mgr.tearing_down("k1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_completed_reset_leaves_no_entry(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+
+        assert await mgr.reset("k1") is True
+
+        provider.shutdown.assert_awaited_once()
+        assert mgr.tearing_down("k1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_reset_whose_shutdown_raises_still_releases_the_entry(self, cfg):
+        """``reset`` defers a shutdown error to its end and re-raises it; the entry is gone by then."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        provider.shutdown = AsyncMock(side_effect=RuntimeError("shutdown failed"))
+
+        with pytest.raises(RuntimeError, match="shutdown failed"):
+            await mgr.reset("k1")
+
+        assert mgr.tearing_down("k1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_successor_popped_during_the_teardown_does_not_replace_the_entry(self, cfg):
+        """First popper wins: the entry names the process the hung teardown holds, not a successor's.
+
+        A cold start can register a successor under the key while the first
+        teardown awaits; resetting that successor records nothing (one entry per
+        key) and its completion releases nothing it did not record, so a reader
+        asking after the run's process still gets the popped one until that
+        teardown ends.
+        """
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        first, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        self._hang_shutdown(first)
+        teardown = asyncio.create_task(mgr.reset("k1"))
+        await self._until_the_shutdown_hangs(mgr, "k1", first)
+
+        successor, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        assert successor is not first
+        assert await mgr.reset("k1") is True
+
+        successor.shutdown.assert_awaited_once()
+        torn = mgr.tearing_down("k1")
+        assert (
+            torn is not None and torn.provider is first
+        ), "the successor's reset replaced the entry"
+
+        teardown.cancel()
+        await asyncio.gather(teardown, return_exceptions=True)
+        assert mgr.tearing_down("k1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_caller_s_scope_names_the_exact_session_its_reset_popped(self, cfg):
+        """``popped`` and the ``on_pop`` hook: what THIS reset popped, read atomically with the pop, kept past release."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        seen: list[tuple[object, bool]] = []
+        scope = mgr.teardown_scope(
+            on_pop=lambda session: seen.append((session, mgr.has_session("k1")))
+        )
+
+        assert await mgr.reset("k1", scope=scope) is True
+
+        assert scope.popped is not None and scope.popped.provider is provider
+        # The hook ran in the pop's own lock hold, before the session left the map.
+        assert seen == [(scope.popped, True)]
+        # The table entry is released with the teardown; the caller's record is not.
+        assert mgr.tearing_down("k1") is None
+        assert scope.popped.provider is provider
+
+    @pytest.mark.asyncio
+    async def test_a_scope_whose_reset_popped_nothing_says_so(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        scope = mgr.teardown_scope()
+
+        assert await mgr.reset("absent", scope=scope) is False
+
+        assert scope.popped is None
+
+
+class TestTheEndingFenceAdmitsNothingUnderTheKey:
+    """``ending_key``: the per-key sibling of the closing check, at every door of the registry.
+
+    A holder that is ending a run -- the cron reaper, ``cancel()`` -- raises the
+    fence around its kill passes. While it is up, a claim or a cold start under
+    the key is refused at the door with ``SessionEndingError``; a cold start that
+    was already inside ``provider.start()`` when it went up -- nothing published
+    yet, so no pass could see it -- is refused at registration when its start
+    returns, fence up or lifted, and the provider it started is hard-killed by the
+    closing manager's own path. Once the fence lifts, a fresh call lands.
+    """
+
+    @staticmethod
+    def _gated_start_factory():
+        """A provider factory whose ``start()`` blocks until the returned gate is set."""
+        gate = asyncio.Event()
+        inner = _mock_provider_factory()
+
+        def factory(session_key=None, agent=None, channel_id=None, **kwargs):
+            provider = inner(session_key, agent, channel_id, **kwargs)
+
+            async def _gated_start(*_args, **_kwargs):
+                await gate.wait()
+
+            provider.start = AsyncMock(side_effect=_gated_start)
+            return provider
+
+        return factory, gate
+
+    @staticmethod
+    async def _until_inside_start(mgr, key):
+        for _ in range(400):
+            if mgr.allocation_in_flight(key):
+                return
+            await asyncio.sleep(0.005)
+        raise AssertionError(f"the cold start of {key} never took its reservation")
+
+    @pytest.mark.asyncio
+    async def test_a_cold_start_under_a_fenced_key_is_refused_at_the_door(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        assert not mgr.is_ending("k1")
+
+        with mgr.ending_key("k1"):
+            assert mgr.is_ending("k1")
+            with pytest.raises(SessionEndingError, match="being ended"):
+                await mgr.get_or_create("k1")
+            assert not mgr.has_session("k1")
+            assert not mgr.allocation_in_flight("k1"), "a refused call reserved nothing"
+
+        assert not mgr.is_ending("k1")
+        # The fence lifted: the injector's retry lands.
+        provider, is_new, _ = await mgr.get_or_create("k1")
+        assert is_new and mgr.has_session("k1")
+        mgr.release("k1")
+        await mgr.reset("k1")
+
+    @pytest.mark.asyncio
+    async def test_a_claim_of_a_live_session_under_a_fenced_key_is_refused(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+
+        with mgr.ending_key("k1"):
+            with pytest.raises(SessionEndingError):
+                await mgr.get_or_create("k1")
+
+        again, is_new, _ = await mgr.get_or_create("k1")
+        assert again is provider and not is_new
+        mgr.release("k1")
+        await mgr.reset("k1")
+
+    @pytest.mark.asyncio
+    async def test_a_cold_start_caught_inside_start_is_refused_at_registration_and_hard_killed(
+        self, cfg
+    ):
+        """The case no pass can see: reservation taken, ``provider.start()`` in flight, nothing published."""
+        factory, gate = self._gated_start_factory()
+        mgr = SessionManager(cfg, provider_factory=factory)
+        cold_start = asyncio.create_task(mgr.get_or_create("k1"))
+        await self._until_inside_start(mgr, "k1")
+        assert not mgr.has_session("k1"), "nothing is published while start() runs"
+
+        with patch.object(mgr, "_dispatch_hard_kill") as hard_kill:
+            with mgr.ending_key("k1"):
+                # The ending caller's post-pass read: the start is still in flight.
+                assert mgr.allocation_in_flight("k1")
+            # The fence has lifted by the time the start returns -- the ending
+            # caller wrote its record and moved on -- and the registration is
+            # refused all the same: the reservation was in flight when the fence
+            # went up.
+            gate.set()
+            with pytest.raises(
+                SessionEndingError, match="was ended while this allocation was starting"
+            ):
+                await cold_start
+
+        assert not mgr.has_session("k1"), (
+            "a cold start caught inside provider.start() by the ending fence published "
+            "its session after the fence lifted"
+        )
+        hard_kill.assert_called_once()
+        (killed,) = hard_kill.call_args.args
+        killed.start.assert_awaited_once()
+        assert not mgr.allocation_in_flight("k1"), "the refused call released its reservation"
+        # And a start that never met the fence lands.
+        provider, is_new, _ = await mgr.get_or_create("k1")
+        assert is_new and provider is not killed
+        mgr.release("k1")
+        await mgr.reset("k1")
+
+    @pytest.mark.asyncio
+    async def test_a_reservation_taken_after_the_fence_lifted_is_not_invalidated(self, cfg):
+        """Only the reservations in flight when the fence went up are invalidated -- a later one is a new life."""
+        factory, gate = self._gated_start_factory()
+        mgr = SessionManager(cfg, provider_factory=factory)
+
+        with mgr.ending_key("k1"):
+            pass
+        cold_start = asyncio.create_task(mgr.get_or_create("k1"))
+        await self._until_inside_start(mgr, "k1")
+        gate.set()
+
+        provider, is_new, _ = await cold_start
+        assert is_new and mgr.has_session("k1")
+        mgr.release("k1")
+        await mgr.reset("k1")
+
+    @pytest.mark.asyncio
+    async def test_the_fence_lifts_however_the_block_ends(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+
+        with pytest.raises(RuntimeError, match="the holder's kill raised"):
+            with mgr.ending_key("k1"):
+                raise RuntimeError("the holder's kill raised")
+
+        assert not mgr.is_ending("k1")
+        provider, is_new, _ = await mgr.get_or_create("k1")
+        assert is_new
+        mgr.release("k1")
+        await mgr.reset("k1")
+
+    @pytest.mark.asyncio
+    async def test_a_per_step_task_session_under_a_fenced_key_is_refused_before_it_is_created(
+        self, cfg
+    ):
+        """The other publication door, gated at its entry: nothing is created for a fenced key."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        parent, _, _ = await mgr.get_or_create("parent")
+        mgr.release("parent")
+
+        with (
+            patch.object(mgr, "_get_or_bootstrap_run_runtime", AsyncMock()) as bootstrap,
+            mgr.ending_key("step1"),
+        ):
+            with pytest.raises(SessionEndingError, match="being ended"):
+                await mgr.open_task_session("parent", "step1")
+
+        bootstrap.assert_not_awaited()
+        assert not mgr.has_session("step1")
+        await mgr.reset("parent")
 
 
 class TestResetWithPid:

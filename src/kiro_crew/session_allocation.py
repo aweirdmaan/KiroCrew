@@ -45,6 +45,21 @@ class SessionClosingError(RuntimeError):
     """A turn was requested after manager shutdown began."""
 
 
+class SessionEndingError(RuntimeError):
+    """A claim or cold start was requested under a key whose run is being ended.
+
+    The per-key sibling of :class:`SessionClosingError`. While a caller holds
+    the key's ending fence (``begin_ending`` / ``end_ending``, the cron reaper
+    and ``cancel()`` around their kill passes and the run's record), a claim or a
+    new allocation under the key is refused at the door, and a cold start whose
+    reservation was already in flight when the fence went up is refused at
+    registration -- even after the fence lifts -- with its started provider
+    hard-killed by the same path a closing manager uses. The request is refused,
+    not queued: the run that owned the key has ended, and nothing may land under
+    it while its record says so.
+    """
+
+
 class SessionBusyError(RuntimeError):
     """A caller requested an immediate turn claim while the session was held."""
 
@@ -149,6 +164,16 @@ class SessionRegistryState:
     continuable_keys: set[str] = field(default_factory=set)
     capability_failures: dict[str, dict[str, str]] = field(default_factory=dict)
     continuable_fallback: Callable[[str], bool] | None = None
+    #: Keys whose run is being ended (``begin_ending``): a claim or cold start
+    #: under one is refused at the door. The value is the set of allocation
+    #: reservation tokens that were in flight when the fence went up -- a cold
+    #: start caught inside ``provider.start()`` -- kept so ``end_ending`` can
+    #: tell them apart from reservations that never met the fence.
+    ending_keys: dict[str, set[object]] = field(default_factory=dict)
+    #: Reservation tokens invalidated by a fence: their cold start is refused at
+    #: registration even after the fence lifts, and its provider hard-killed.
+    #: A token leaves the set when its reservation is removed.
+    invalidated_reservations: set[object] = field(default_factory=set)
 
 
 class InboundCallbackReservation:
@@ -475,6 +500,69 @@ class SessionAllocationService:
         """Return whether a folded alias has an allocation/claim in flight."""
         return bool(self._allocation_reservations.get(self._owner._fold_key(key)))
 
+    def begin_ending(self, key: str) -> None:
+        """Raise the per-key ending fence: nothing may land under *key* until ``end_ending``.
+
+        The run that owned the key is being ended by a caller that holds its
+        claim (the cron reaper, ``cancel()``), and that caller is about to record
+        the run as reaped or cancelled. From here to ``end_ending`` --
+        held through the caller's kill passes AND its record -- a claim or a new
+        allocation under the key is refused at the door of ``get_or_create``
+        (:class:`SessionEndingError`), and every allocation reservation already in
+        flight under the key is INVALIDATED: a cold start caught inside
+        ``provider.start()`` has published nothing the caller's passes could see,
+        so it is refused at registration when it gets there, even after the fence
+        lifts, and the provider it started is hard-killed by the same path a
+        closing manager uses. Without this the record would say ``reaped`` while
+        that process published afterwards and the injection that started it ran
+        on. Synchronous and lock-free by design: the reservation map only moves
+        between awaits on the loop, so a snapshot taken here is consistent, and
+        the caller must be able to raise the fence before its first await. One
+        fence per key, owned by the run claim's taker; a second ``begin_ending``
+        on a fenced key adds the reservations it now sees.
+        """
+        folded = self._owner._fold_key(key)
+        pending = set(self._allocation_reservations.get(folded, ()))
+        self.state.ending_keys.setdefault(folded, set()).update(pending)
+        self.state.invalidated_reservations.update(pending)
+
+    def end_ending(self, key: str) -> None:
+        """Lift the ending fence for *key*; reservations it invalidated stay invalidated.
+
+        A new allocation under the key may proceed from here (the run's record
+        is written), while a cold start that was in flight when the fence went
+        up still cannot register: its token stays in ``invalidated_reservations``
+        until the reservation itself is removed.
+        """
+        self.state.ending_keys.pop(self._owner._fold_key(key), None)
+
+    def is_ending(self, key: str) -> bool:
+        """Whether *key*'s ending fence is up."""
+        return self._owner._fold_key(key) in self.state.ending_keys
+
+    def _refuse_if_ending(self, key: str, reservation: object | None) -> None:
+        """Refuse a claim or allocation under a fenced key, or one whose reservation a fence invalidated.
+
+        ``key`` is already folded. Called at every door of ``get_or_create``: the
+        reservation take, the claim of a live session, the cold start before it
+        spawns, and the registration after ``provider.start()`` -- the last two
+        with the call's own reservation token, so a start that was in flight
+        when the fence went up is refused even after ``end_ending``. And at the
+        entry of ``open_task_session``, the other publication door, with no
+        token: that path reserves nothing, so it is gated only while the fence
+        is up.
+        """
+        if key in self.state.ending_keys:
+            raise SessionEndingError(
+                f"session key {key!r} is being ended (its run is being reaped or "
+                "cancelled); refusing to claim or start a session under it"
+            )
+        if reservation is not None and reservation in self.state.invalidated_reservations:
+            raise SessionEndingError(
+                f"session key {key!r} was ended while this allocation was starting; "
+                "refusing to register the session it started"
+            )
+
     async def try_acquire(self, key: str) -> bool:
         """Acquire only an exact-key idle session; alias folding is intentional absent."""
         session = self._sessions.get(key)
@@ -790,6 +878,14 @@ class SessionAllocationService:
                 key, agent=agent, approval_policy=approval_policy, cwd=cwd
             )
         async with self._lock:
+            # The other publication door: a key whose run is being ended
+            # (``begin_ending``) admits no per-step session either. Checked here,
+            # before anything is created for it, because this path holds no
+            # allocation reservation to invalidate and has no hard-kill handler
+            # for a session already created on the shared runtime; a create
+            # already in flight when the fence goes up is what the ending
+            # caller's post-pass read of the key remains the net for.
+            self._refuse_if_ending(key, None)
             existing = self._sessions.get(key)
             if existing is not None:
                 existing.last_used = time.monotonic()
@@ -1376,6 +1472,12 @@ class SessionAllocationService:
 
     def _remove_reservation_now(self, key: str, token: object) -> None:
         """Remove a token in the yield-free span after a successful claim."""
+        # A fence's invalidation lives exactly as long as the reservation it
+        # invalidated: the door checks have run by the time the token is removed.
+        self.state.invalidated_reservations.discard(token)
+        fence = self.state.ending_keys.get(key)
+        if fence is not None:
+            fence.discard(token)
         reservations = self._allocation_reservations.get(key)
         if reservations is not None and token in reservations:
             reservations.remove(token)
@@ -1430,6 +1532,9 @@ class SessionAllocationService:
                     "progress); refusing to start or resume a turn"
                 )
             reserved_key = self._owner._fold_key(key)
+            # The per-key sibling of the closing check: a key whose run is being
+            # ended admits no claim and no cold start until its record is written.
+            self._refuse_if_ending(reserved_key, None)
             self._allocation_reservations.setdefault(reserved_key, set()).add(token)
             self.advance_ownership_generation(reserved_key)
         try:
@@ -1445,6 +1550,7 @@ class SessionAllocationService:
                 speculative_resume=speculative_resume,
                 wait_if_busy=wait_if_busy,
                 _won_race_retries=_won_race_retries,
+                _reservation=token,
                 **extra_factory_kwargs,
             )
         except BaseException:
@@ -1484,6 +1590,7 @@ class SessionAllocationService:
         speculative_resume: bool = False,
         wait_if_busy: bool = True,
         _won_race_retries: int = 0,
+        _reservation: object | None = None,
         **extra_factory_kwargs: Any,
     ) -> tuple[LLMProvider, bool, bool]:
         """Claim a live session or cold-start one, returning its held lease.
@@ -1491,7 +1598,9 @@ class SessionAllocationService:
         The returned tuple is ``(provider, is_new, resumed)``.  A successful
         return always owns the session semaphore and must be paired with
         ``release``.  First-turn observation is consumed only by the real
-        claimant that actually wins that semaphore.
+        claimant that actually wins that semaphore. ``_reservation`` is the
+        allocation reservation token ``get_or_create`` took for this call; the
+        ending fence (:meth:`_refuse_if_ending`) reads it at every door below.
         """
         owner = self._owner
         constants = self._deps.constants
@@ -1512,6 +1621,7 @@ class SessionAllocationService:
                         "SessionManager is closing (gateway restart/shutdown in "
                         "progress); refusing to start or resume a turn"
                     )
+                self._refuse_if_ending(key, _reservation)
 
                 existing = self._sessions.get(key)
                 recycling = existing is not None and owner._recycling.get(key) is existing
@@ -1920,6 +2030,10 @@ class SessionAllocationService:
                         if provider.process_instance:
                             raise CapabilityStartupError("capability_runtime_not_fresh")
                         await asyncio.to_thread(verify_saved, preparation, provider.cwd)
+                    # The key may have been fenced while this call waited for the
+                    # semaphore or the reads above: refuse before a process is
+                    # spawned that the registration door would only refuse later.
+                    self._refuse_if_ending(key, _reservation)
                     pre_spawn = await pre_spawn_identity(
                         getattr(owner, "spawn_identity_reader", None)
                     )
@@ -1996,6 +2110,10 @@ class SessionAllocationService:
                         "SessionManager began closing during provider startup; "
                         "refusing to register a session behind the shutdown snapshot"
                     )
+                # And the key may have been ended during start(): a reservation
+                # the fence invalidated registers nothing, fence up or lifted --
+                # the provider it started is hard-killed by the handler below.
+                self._refuse_if_ending(key, _reservation)
 
                 existing = self._sessions.get(key)
                 recycling = existing is not None and owner._recycling.get(key) is existing
