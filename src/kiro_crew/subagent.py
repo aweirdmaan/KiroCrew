@@ -97,6 +97,13 @@ from kiro_crew.llm_helpers import (
 from kiro_crew.mcp_gateway import STUB_MODULE
 from kiro_crew.metrics.events import CHILD_PERMISSION_DENIED, emit_counter
 from kiro_crew.platform.context import redact_via_context
+from kiro_crew.process_identity import (  # noqa: F401 - resolved by run.py/terminal.py via bind_component_globals
+    ProcessHandle,
+    failure_name,
+    kill_verified_process,
+    process_handle_of,
+    process_survived,
+)
 from kiro_crew.providers.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -113,7 +120,10 @@ from kiro_crew.security import (
     redact_exfiltration_urls,
 )
 from kiro_crew.sel import sel
-from kiro_crew.session import SessionManager
+from kiro_crew.session import (  # noqa: F401 - child_process_helpers resolved by terminal.py via bind_component_globals
+    SessionManager,
+    child_process_helpers,
+)
 from kiro_crew.session_surface import has_dashboard_surface
 from kiro_crew.session_workspace import result_path as _ws_result_path
 from kiro_crew.slack.format import extract_options
@@ -536,6 +546,42 @@ _STEER_STARTUP_POLL_SECS = 0.5
 # latency is irrelevant next to permanent wedging.
 _WAVE_STUCK_SECS = 1800
 _RESET_TIMEOUT = 30.0  # max seconds for session reset in finally block
+
+# Of ``_MAX_ERROR_DETAIL_LEN``, the least a force-stop's kill failure keeps
+# when the error it is appended to already fills the bound: enough for the
+# kill's own failure names (a refused pid, an unpinnable exited tree, several
+# handles' failures joined) and small enough that the run's error keeps its
+# exception and most of its story.
+_KILL_FAILURE_RESERVE_LEN = 400
+
+
+def _with_kill_failure(error: str, kill_failed: str) -> str:
+    """The run's error text with the force-stop's reported failure appended, bounded.
+
+    Same suffix the cron reaper writes into a job's ``last_error``
+    (``…; kill failed: <reason>``), so the two audit trails read alike.
+
+    The result is held to ``_MAX_ERROR_DETAIL_LEN``, the bound every other
+    writer of ``info.error`` applies, HERE at the point of retention (the
+    record, the tombstone and the report all carry this string): the kill's
+    reason is not this code's to size -- a Windows ``taskkill /T`` that fails
+    carries the tree's own stderr, one line per process the run spawned -- and
+    the error it joins may already sit at the bound. The reason keeps whatever
+    of the bound the error leaves free, and at least
+    ``_KILL_FAILURE_RESERVE_LEN``; past that the run's error is trimmed to make
+    room, since the failure is the part the record exists to carry.
+    """
+    separator = "; " if error else ""
+    prefix = "kill failed: "
+    reason_room = max(
+        _KILL_FAILURE_RESERVE_LEN,
+        _MAX_ERROR_DETAIL_LEN - len(error) - len(separator) - len(prefix),
+    )
+    suffix = f"{prefix}{kill_failed[:reason_room]}"
+    error = error[: max(0, _MAX_ERROR_DETAIL_LEN - len(suffix) - len(separator))]
+    return f"{error}{separator}{suffix}"
+
+
 _RECOVERY_SLOT_WAIT_SECS = 60.0
 _REPORT_DRAIN_TIMEOUT = (
     30.0  # max seconds cancel_all() waits for shielded terminal reports to drain
@@ -2652,6 +2698,17 @@ class SubagentManager:
         # makes that inference unnecessary. Removed by the same ``finally`` that sets
         # the event, so a missing entry always means "nothing left to wait for".
         self._teardown_gates: dict[str, asyncio.Event] = {}
+        #: run id -> the kill handles of every process its session key named,
+        #: RETAINED across the reset that pops the session from the map (see
+        #: :class:`kiro_crew.process_identity.ProcessHandle`).
+        #: Written by :meth:`_retain_process_handles` from whichever teardown path
+        #: reaches the reset first -- the run's own ``finally`` or the reaper --
+        #: and read by the other on a session-map miss, so a force-stop that
+        #: arrives while the first reset is hanging can still name, verify and
+        #: signal the process. Cleared when the path that holds it has decided
+        #: (the handles were consumed by the kill, or the survivor check found
+        #: the processes gone); an entry that outlives its run is one small record.
+        self._process_handles: dict[str, list[ProcessHandle]] = {}
         #: parent session key -> event pulsed whenever one of its runs reaches a
         #: terminal report. Created on demand by :meth:`completion_event` and
         #: dropped by :meth:`release_completion_event`, so the only entries are
@@ -2676,6 +2733,20 @@ class SubagentManager:
         # finalize_batch alongside _batch_submitted.
         self._batch_progress_ts: dict[str, float] = {}
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Every ``_force_reap`` that runs OUTSIDE the reaper task -- a dashboard
+        # Stop, a parent-end or stage-boundary cancel, each awaited inside its
+        # caller's own task. ``cancel_all`` cancels these beside the reaper task
+        # so their cancellation arms finish the record and release the report
+        # inside the shutdown drain: a reap the shutdown never touched sat in
+        # its hanging reset until the gateway's budget hard-exited the process,
+        # with its report waiting on a gate nobody released.
+        self._reap_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+        # The one reap in flight per run, by agent id: a future its owner settles
+        # on every exit. A second stop path arriving while it is pending (a
+        # dashboard Stop racing a deadline reap, or the reverse) joins it
+        # instead of running a second reap, so the kill is decided, recorded
+        # and reported once. See ``_force_reap``.
+        self._reaps_in_flight: dict[str, asyncio.Future] = {}  # type: ignore[type-arg]
         # Cache global approval_mode at init to avoid disk I/O on every
         # parentless spawn (cron, webhooks).
         try:
@@ -3097,12 +3168,24 @@ class SubagentManager:
             return False
 
     @staticmethod
-    def _kill_orphan_pid(pid: int) -> None:
-        """Best-effort SIGKILL of an orphaned process."""
+    def _kill_orphan_pid(pid: int) -> str | None:
+        """Best-effort SIGKILL of an orphaned process; returns what stopped it.
+
+        ``None`` once the process is gone -- signalled here, or already exited
+        by the time the signal went out (nothing to kill is not a failure) --
+        and otherwise the failure the kill raised (``PermissionError: …``),
+        named the way the reaper's record names one, so the caller's audit row
+        can say ``failed`` for a process the kill left standing rather than
+        ``killed`` regardless. Never raises: the caller owns a reconciliation
+        it must still finish.
+        """
         try:
             platform_compat.kill_pid(pid, platform_compat.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
+        except ProcessLookupError:
+            return None
+        except OSError as exc:
+            return failure_name(exc)
+        return None
 
     async def _notify_orphan(
         self, agent_id: str, state: dict, recovery: str, has_result: bool
@@ -3239,6 +3322,7 @@ class SubagentManager:
         mark_delivered_on_success: bool,
         settle_digest: bool = False,
         teardown_done: "asyncio.Event | None" = None,
+        gate: "asyncio.Future[bool] | None" = None,
     ) -> bool:
         return await self._terminal._report_terminal_impl(
             info,
@@ -3247,6 +3331,7 @@ class SubagentManager:
             mark_delivered_on_success=mark_delivered_on_success,
             settle_digest=settle_digest,
             teardown_done=teardown_done,
+            gate=gate,
         )
 
     async def _run_terminal_report(
@@ -3277,6 +3362,7 @@ class SubagentManager:
         mark_delivered_on_success: bool,
         settle_digest: bool = False,
         teardown_done: "asyncio.Event | None" = None,
+        gate: "asyncio.Future[bool] | None" = None,
     ) -> "asyncio.Task[bool]":
         return self._terminal._spawn_terminal_report_impl(
             info,
@@ -3285,6 +3371,7 @@ class SubagentManager:
             mark_delivered_on_success=mark_delivered_on_success,
             settle_digest=settle_digest,
             teardown_done=teardown_done,
+            gate=gate,
         )
 
     @staticmethod
@@ -3719,8 +3806,19 @@ class SubagentManager:
     ) -> None:
         return await self._terminal._force_reap_impl(agent_id, info, elapsed, reason=reason)
 
-    async def _sigkill_session(self, session_key: str) -> None:
-        return await self._terminal._sigkill_session_impl(session_key)
+    async def _reap_once(
+        self, agent_id: str, info: SubagentInfo, elapsed: float, *, reason: str = ""
+    ) -> None:
+        return await self._terminal._reap_once_impl(agent_id, info, elapsed, reason=reason)
+
+    async def _sigkill_session(self, session_key: str, handle: ProcessHandle | None) -> str | None:
+        return await self._terminal._sigkill_session_impl(session_key, handle)
+
+    async def _sigkill_sessions(self, session_key: str, handles: list[ProcessHandle]) -> str | None:
+        return await self._terminal._sigkill_sessions_impl(session_key, handles)
+
+    def _retain_process_handles(self, agent_id: str, session_key: str) -> list[ProcessHandle]:
+        return self._terminal._retain_process_handles_impl(agent_id, session_key)
 
     def notify_injection_failed(
         self, info: SubagentInfo, reason: str = "delivery timed out"
