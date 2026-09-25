@@ -6376,6 +6376,18 @@ def _mount_or_warn(source, target, flags, what):
 
 _O_PATH = getattr(os, "O_PATH", 0)
 
+#: ``S_IFMT`` / ``S_IFLNK``, spelled out rather than taken from ``stat``. The
+#: helpers below are lifted and run as a block by several suites, and the
+#: module-level slice has never needed ``stat`` -- reaching for it here would
+#: make a self-contained block depend on its caller's namespace. The launcher
+#: itself does import ``stat``; this keeps the block honest anyway.
+_S_IFMT = 0o170000
+_S_IFLNK = 0o120000
+
+def _mode_is_link(mode):
+    """Whether *mode* from a no-follow ``fstat`` describes a symlink."""
+    return (mode & _S_IFMT) == _S_IFLNK
+
 def _any_kind(_mode):
     """Kind predicate for a target whose KIND is not the question.
 
@@ -6387,7 +6399,35 @@ def _any_kind(_mode):
     """
     return True
 
-def _pin_mount_path(target, kind, require=False, require_present=False):
+def _name_occupant(target):
+    """Identify what occupies *target* itself, following nothing.
+
+    The first look a caller takes at a protected name, when its guard needs to
+    follow links but the launcher still has to notice the name's occupant
+    CHANGING afterwards. Returns the same triple :func:`_pin_mount_path`
+    reports, so the two can be compared directly, or ``None`` when nothing is
+    there -- absence is that caller's own ordinary case to judge, not a refusal
+    to make here.
+
+    Deliberately silent on every error: this establishes an EXPECTATION, and the
+    call that consumes it refuses on its own behalf. Turning an unreadable name
+    into a refusal here would fail spawns the pin itself handles, and each of
+    those refusals already names what it could not do.
+    """
+    try:
+        fd = os.open(target, os.O_RDONLY | _O_PATH | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return (st.st_dev, st.st_ino, _mode_is_link(st.st_mode))
+
+def _pin_mount_path(target, kind, require=False, require_present=False,
+                    expect_occupant=None):
     """Resolve *target* ONCE and hand it on as a path that cannot be re-aimed.
 
     Every hiding mount below asks two things about one name: is there an object
@@ -6410,6 +6450,41 @@ def _pin_mount_path(target, kind, require=False, require_present=False):
     as a plain ``isdir``/``isfile`` guard follows them, so a supported symlinked
     data home keeps working; what the descriptor changes is only that the object
     the mask covers is the object that was classified.
+
+    THE FIRST LOOK DOES NOT FOLLOW, and that is a separate property from the
+    one above. A link occupying a protected name has two unrelated causes and
+    they need opposite answers: an ordinary ``stow`` or ``chezmoi`` layout has
+    had one there since before the gateway started, and refusing it would fail
+    every strict spawn on a supported machine; a link SUBSTITUTED for a
+    directory while this launcher looks is a redirect, and following it masks
+    the planter's decoy while the real directory, renamed aside, stays
+    readable. No single instant separates them -- both show a link -- so this
+    does not try to. It opens the name once WITHOUT following, reports the
+    identity of whatever occupied it, and lets the caller hand that identity
+    back on a later call. A link that was already there is the same link at
+    both looks and passes. A directory replaced by a link is not, and refuses.
+
+    ``O_PATH | O_NOFOLLOW`` is what makes the first look possible without
+    charging the supported layout: it does not refuse a link, it returns a
+    descriptor on the link ITSELF, which is how the kind is told apart from the
+    identity. ``O_DIRECTORY | O_NOFOLLOW`` would refuse instead, and that
+    refusal lands on the stow layout rather than on the planter.
+
+    *expect_occupant* is an identity a previous call returned for this same
+    name. Passing it asks for the occupant to be unchanged since then; omitting
+    it asks nothing, for the callers whose first look this IS.
+
+    THE NAME IS NEVER RESOLVED AS A WHOLE PATH TWICE. The parent directory is
+    opened once and held, the no-follow first look happens relative to that
+    descriptor, and when a link holds the name its target is read from the
+    descriptor already open ON THAT LINK rather than by looking the name up
+    again. Resolving the name a second time would put a fresh whole-path lookup
+    after the occupant comparison, which is exactly the check being bypassed:
+    the comparison would pass on the object the first look saw while the mask
+    bound whatever the name reached a moment later. Reading the link through its
+    own descriptor has no such window, and it is also immune to a replacement
+    link that reuses the old inode -- an identity comparison after the fact is
+    not.
 
     THE TWO FAILURES ARE NOT THE SAME FAILURE, and collapsing them is how a
     mask goes missing in silence:
@@ -6437,9 +6512,11 @@ def _pin_mount_path(target, kind, require=False, require_present=False):
     for a caller whose enclosing guard has already settled the kind as well as
     the existence, so either miss is a race.
 
-    Returns ``(fd, path)`` on a match, ``(None, None)`` on a skip. The caller
-    MUST keep *fd* open until its mount returns, because the proc path lives
-    only as long as the descriptor, and MUST close it afterwards.
+    Returns ``(fd, path, occupant)`` on a match, ``(None, None, None)`` on a
+    skip. *occupant* identifies what held the NAME at the first look, for a
+    later call or for the post-mount name check. The caller MUST keep *fd* open
+    until its mount returns, because the proc path lives only as long as the
+    descriptor, and MUST close it afterwards.
     """
     def _refuse(why):
         sys.exit(
@@ -6449,14 +6526,96 @@ def _pin_mount_path(target, kind, require=False, require_present=False):
             "mask deliberately." % (os.fsdecode(target), why)
         )
 
+    # The name is never resolved as a whole path more than once. The PARENT is
+    # held for the duration, and every look at the leaf happens relative to that
+    # descriptor, so no component above it can be redirected in between and the
+    # leaf is never reopened by name.
+    _t = os.fsencode(target)
+    while len(_t) > 1 and _t.endswith(b"/"):
+        _t = _t[:-1]
+    _parent, _leaf = os.path.split(_t)
+    if not _leaf:
+        if require or require_present:
+            _refuse("it names no leaf to mask")
+        return None, None, None
     try:
-        fd = os.open(target, os.O_RDONLY | _O_PATH)
+        parent_fd = os.open(_parent or b".", os.O_RDONLY | os.O_DIRECTORY)
     except FileNotFoundError:
         if require or require_present:
-            _refuse("it is absent")
-        return None, None
+            _refuse("the directory holding it is absent")
+        return None, None, None
     except OSError as exc:
         _refuse("%s" % exc)
+
+    # The FIRST look, which does not follow: this reports what occupies the name
+    # itself, so a link is told apart from a directory without being refused.
+    try:
+        name_fd = os.open(
+            _leaf, os.O_RDONLY | _O_PATH | os.O_NOFOLLOW, dir_fd=parent_fd
+        )
+    except FileNotFoundError:
+        os.close(parent_fd)
+        if require or require_present:
+            _refuse("it is absent")
+        return None, None, None
+    except OSError as exc:
+        os.close(parent_fd)
+        _refuse("%s" % exc)
+    try:
+        name_st = os.fstat(name_fd)
+    except OSError as exc:
+        os.close(name_fd)
+        os.close(parent_fd)
+        _refuse("%s" % exc)
+    occupant = (name_st.st_dev, name_st.st_ino, _mode_is_link(name_st.st_mode))
+
+    if expect_occupant is not None and occupant != expect_occupant:
+        os.close(name_fd)
+        os.close(parent_fd)
+        # The redirect: a DIFFERENT object holds this name than the one the
+        # caller's earlier look classified. Following it now would bind the mask
+        # over whatever the new occupant resolves to, while the object the caller
+        # inspected -- the one holding the bytes this mask exists to cover -- sits
+        # at a name nothing masks. Not reachable by a layout that merely uses a
+        # link: that link is its own occupant at both looks.
+        _refuse("a different object holds that name than the one this mask was built for")
+
+    if occupant[2]:
+        # A link holds the name. Follow it ONCE, deliberately, because the
+        # supported layout depends on it -- and follow it through the DESCRIPTOR
+        # already held on that link, never by resolving the name again. Reading
+        # the link's own content with an empty relative path against its
+        # descriptor cannot be redirected: the directory entry may be replaced
+        # while this runs, including by a new link that reuses the old inode, and
+        # this still reads the content of the link the first look classified. A
+        # relative target is resolved against the held parent, which is where the
+        # link's own target is relative to, so no component above it can be
+        # redirected either.
+        try:
+            _link_to = os.fsencode(os.readlink("", dir_fd=name_fd))
+        except OSError as exc:
+            os.close(name_fd)
+            os.close(parent_fd)
+            _refuse("%s" % exc)
+        os.close(name_fd)
+        try:
+            if _link_to.startswith(b"/"):
+                fd = os.open(_link_to, os.O_RDONLY | _O_PATH)
+            else:
+                fd = os.open(_link_to, os.O_RDONLY | _O_PATH, dir_fd=parent_fd)
+        except FileNotFoundError:
+            os.close(parent_fd)
+            if require or require_present:
+                _refuse("its link target is absent")
+            return None, None, None
+        except OSError as exc:
+            os.close(parent_fd)
+            _refuse("%s" % exc)
+    else:
+        # The name holds the object itself, so the first look already pinned it
+        # and there is no second resolution to race.
+        fd = name_fd
+    os.close(parent_fd)
     try:
         matched = kind(os.fstat(fd).st_mode)
     except OSError as exc:
@@ -6472,8 +6631,8 @@ def _pin_mount_path(target, kind, require=False, require_present=False):
         # never meant to mask it.
         if require:
             _refuse("it is not the kind of object this mask covers")
-        return None, None
-    return fd, ("/proc/self/fd/%d" % fd).encode()
+        return None, None, None
+    return fd, ("/proc/self/fd/%d" % fd).encode(), occupant
 
 def _mask_required(name):
     """Whether *name* is a target something established before this launcher ran.
@@ -6740,7 +6899,7 @@ def main():
         # every sibling stays hidden.
         _private_stage = {{}}
         for p in PRIVATE_DIRS:
-            _win_fd, _win_src = _pin_mount_path(p, stat.S_ISDIR)
+            _win_fd, _win_src, _ = _pin_mount_path(p, stat.S_ISDIR)
             if _win_src is None:
                 continue
             try:
@@ -6753,8 +6912,8 @@ def main():
         # Bind-mount empty dirs over credential paths (per-dir tmpdir to
         # prevent content leaking across mounts via shared backing dir).
         for d in SENSITIVE_DIRS:
-            _dir_fd, _dir_target = _pin_mount_path(d.encode(), stat.S_ISDIR,
-                                                   require_present=_mask_required(d))
+            _dir_fd, _dir_target, _ = _pin_mount_path(
+                d.encode(), stat.S_ISDIR, require_present=_mask_required(d))
             if _dir_target is None:
                 continue
             _windows = [p for p in _private_stage
@@ -6794,8 +6953,8 @@ def main():
             # regular file exactly as it seals a directory. Requiring a directory
             # would silently skip every ceiling FILE — the caller asks for it to be
             # sealed, gets no error, and it stays writable.
-            _seal_fd, _seal_target = _pin_mount_path(target, _any_kind,
-                                                     require_present=_mask_required(target))
+            _seal_fd, _seal_target, _ = _pin_mount_path(
+                target, _any_kind, require_present=_mask_required(target))
             if _seal_target is None:
                 continue
             try:
@@ -6813,7 +6972,7 @@ def main():
             # the name now reaches something else and the seal would land off
             # target, leaving this ceiling writable. Refuse instead, matching
             # every other failed control in this launcher.
-            _rdonly_fd, _rdonly_target = _pin_mount_path(target, _any_kind)
+            _rdonly_fd, _rdonly_target, _ = _pin_mount_path(target, _any_kind)
             if _rdonly_target is not None:
                 try:
                     _rdonly_id = os.fstat(_rdonly_fd)
@@ -6897,8 +7056,8 @@ def main():
         # empty tempfile from a tmpfs (cross-fs) when available so the bind
         # cannot corrupt the target's host directory entry on namespace exit.
         for f in SENSITIVE_FILES:
-            _file_fd, _file_target = _pin_mount_path(f.encode(), stat.S_ISREG,
-                                                     require_present=_mask_required(f))
+            _file_fd, _file_target, _ = _pin_mount_path(
+                f.encode(), stat.S_ISREG, require_present=_mask_required(f))
             if _file_target is None:
                 continue
             try:
@@ -6911,6 +7070,16 @@ def main():
             _verify_masked_name(f.encode(), empty_path.encode(), f)
 
         # .ssh: hide keys but expose known_hosts content (strict only)
+        #
+        # The FIRST look at this name happens here, before the guard below, and
+        # does not follow. Its answer is carried into the pin, so a directory
+        # replaced by a link while this block runs refuses instead of masking the
+        # planter's decoy and leaving the renamed key directory readable. The
+        # guard itself still follows, deliberately: a name that has been a link
+        # since before the gateway started is an ordinary stow or chezmoi layout
+        # and must keep working, and the carried identity is what tells that
+        # apart from a substitution without refusing either at sight.
+        _ssh_occupant = _name_occupant(SSH_DIR.encode())
         if HIDE_SSH and os.path.isdir(SSH_DIR):
             kh_data = b""
             if os.path.isfile(SSH_KNOWN_HOSTS):
@@ -6964,8 +7133,9 @@ def main():
             # which is what the unconditional mount on this path amounts to: the
             # tier exists to hide private keys, and a skip execs with them
             # readable and nothing on stderr.
-            _ssh_fd, _ssh_target = _pin_mount_path(
-                SSH_DIR.encode(), stat.S_ISDIR, require=True
+            _ssh_fd, _ssh_target, _ = _pin_mount_path(
+                SSH_DIR.encode(), stat.S_ISDIR, require=True,
+                expect_occupant=_ssh_occupant
             )
             try:
                 _mount_or_die(ssh_tmp, _ssh_target, _MS_BIND,

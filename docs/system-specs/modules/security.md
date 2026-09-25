@@ -77,9 +77,25 @@ kept the same object on both sides.** The pass runs in the gateway and the mask 
 the launcher child, so a name swapped between them is judged once and bound twice.
 `_pin_mount_path` resolves each mask target ONCE into an `O_PATH` descriptor, classifies it
 with `fstat` on that descriptor, and the mount takes `/proc/self/fd/<fd>` — a path that
-names the object the descriptor holds however the name reads by then. Symlinks are still
-followed at the pin, exactly as the `isdir`/`isfile` guards it replaces followed them, so a
-supported symlinked data home keeps working. Pinning alone closes only half the window:
+names the object the descriptor holds however the name reads by then.
+
+**The FIRST look does not follow, and a link is still followed once -- those are two
+different statements and both are needed.** A link occupying a protected name has two
+unrelated causes wanting opposite answers: an ordinary `stow` or `chezmoi` layout has had
+one there since before the gateway started, and refusing it fails every strict spawn on a
+supported machine; a link SUBSTITUTED for a directory while the launcher looks is a
+redirect, and following it masks the planter's decoy while the real directory, renamed
+aside, stays readable. Nothing at a single instant separates them -- both show a link -- so
+the launcher does not try. `_name_occupant` opens the name `O_PATH | O_NOFOLLOW`, which
+does not refuse a link but returns a descriptor on the link ITSELF, and reports the
+identity of whatever occupies the name. The pin takes that identity back as
+`expect_occupant` and refuses when a later look finds a DIFFERENT occupant. A link that was
+already there is the same link at both looks and passes; a directory replaced by a link is
+not. `O_DIRECTORY | O_NOFOLLOW` would refuse a link outright instead, and that refusal
+lands on the supported layout rather than on the planter, which is why it is not used.
+Once the occupant is known, a link is followed exactly ONCE so the mask covers the store
+the keys actually live in, as the `isdir`/`isfile` guards it replaces did, so a supported
+symlinked data home keeps working. Pinning alone closes only half the window:
 with the mask on the inspected object, a rename leaves the NAME reaching the racing
 writer's replacement — not a leak of what was there, a WRITABLE object at a protected name,
 which for the leaves the gateway reads back as authoritative buys forged records. So
@@ -88,8 +104,9 @@ that mount's stand-in. The read-only ceiling seal reaches the same invariant by 
 step in the other direction: its remount can only name the mount its bind just created, so
 it re-resolves once and requires the object it reaches to be the object it bound.
 
-**Four refusal classes are new on the spawn path, and each fails CLOSED**: a target that
-exists and cannot be pinned (`open` denied where `stat` succeeded), a masked name that does
+**Five refusal classes are new on the spawn path, and each fails CLOSED**: a target that
+exists and cannot be pinned (`open` denied where `stat` succeeded), a masked name whose
+occupant changed between a caller's first look and its pin, a masked name that does
 not reach its stand-in afterwards, a ceiling whose identity changed between being bound
 and being sealed, and a protected target that was present pre-spawn and absent by the time
 the child mounts. That last one is decided in two places, and the split is forced rather

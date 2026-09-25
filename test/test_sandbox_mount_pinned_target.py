@@ -465,12 +465,21 @@ def test_known_hosts_is_staged_into_the_standin_before_it_is_mounted(
 
 
 def _deny_open(monkeypatch: pytest.MonkeyPatch, victim: Path, err: int) -> None:
-    """Make ``os.open`` fail with *err* for *victim* only, delegating otherwise."""
+    """Make ``os.open`` fail with *err* for *victim* only, delegating otherwise.
+
+    Matches two spellings of the same open, because the launcher holds the
+    target's PARENT and opens the leaf relative to that descriptor: the whole
+    path, and the bare leaf name passed with a ``dir_fd``. Matching only the
+    whole path would leave the denial never firing, and the tests that assert a
+    refusal would pass because nothing was denied at all.
+    """
     real_open = os.open
 
     def fake_open(path, flags, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
-        if os.fsdecode(path) == str(victim):
-            raise OSError(err, os.strerror(err), os.fsdecode(path))
+        spelling = os.fsdecode(path)
+        relative_to_parent = kwargs.get("dir_fd") is not None and spelling == victim.name
+        if spelling == str(victim) or relative_to_parent:
+            raise OSError(err, os.strerror(err), spelling)
         return real_open(path, flags, *args, **kwargs)
 
     monkeypatch.setattr(os, "open", fake_open)
@@ -581,8 +590,9 @@ def test_break_arm_restoring_the_ssh_fail_open_loses_the_key_mask(
     """
     script = _build_launcher_script("strict")
     anchor = (
-        "            _ssh_fd, _ssh_target = _pin_mount_path(\n"
-        "                SSH_DIR.encode(), stat.S_ISDIR, require=True\n"
+        "            _ssh_fd, _ssh_target, _ = _pin_mount_path(\n"
+        "                SSH_DIR.encode(), stat.S_ISDIR, require=True,\n"
+        "                expect_occupant=_ssh_occupant\n"
         "            )\n"
         "            try:\n"
         "                _mount_or_die(ssh_tmp, _ssh_target, _MS_BIND,\n"
@@ -593,7 +603,8 @@ def test_break_arm_restoring_the_ssh_fail_open_loses_the_key_mask(
     assert anchor in script, "break-arm anchor does not match the launcher"
     mutant = script.replace(
         anchor,
-        "            _ssh_fd, _ssh_target = _pin_mount_path(SSH_DIR.encode(), stat.S_ISDIR)\n"
+        "            _ssh_fd, _ssh_target, _ = _pin_mount_path(\n"
+        "                SSH_DIR.encode(), stat.S_ISDIR)\n"
         "            if _ssh_target is not None:\n"
         "                try:\n"
         "                    _mount_or_die(ssh_tmp, _ssh_target, _MS_BIND,\n"
@@ -835,8 +846,8 @@ def test_write_carveout_still_resolves_its_own_name_twice(tmp_path: Path) -> Non
 _BREAK_ARMS = (
     (
         "file-mask-by-name",
-        "            _file_fd, _file_target = _pin_mount_path(f.encode(), stat.S_ISREG,\n"
-        "                                                     require_present=_mask_required(f))\n"
+        "            _file_fd, _file_target, _ = _pin_mount_path(\n"
+        "                f.encode(), stat.S_ISREG, require_present=_mask_required(f))\n"
         "            if _file_target is None:\n"
         "                continue\n",
         "            _file_fd, _file_target = None, f.encode()\n"
@@ -845,8 +856,8 @@ _BREAK_ARMS = (
     ),
     (
         "dir-mask-by-name",
-        "            _dir_fd, _dir_target = _pin_mount_path(d.encode(), stat.S_ISDIR,\n"
-        "                                                   require_present=_mask_required(d))\n"
+        "            _dir_fd, _dir_target, _ = _pin_mount_path(\n"
+        "                d.encode(), stat.S_ISDIR, require_present=_mask_required(d))\n"
         "            if _dir_target is None:\n"
         "                continue\n",
         "            _dir_fd, _dir_target = None, d.encode()\n"
