@@ -2206,6 +2206,27 @@ def _resolved_bound_port(runner: web.AppRunner, port: int) -> int:
     return 0
 
 
+def _resolved_bound_host(runner: web.AppRunner, requested: str) -> str:
+    """The address actually bound, falling back to the *requested* one.
+
+    A credential is keyed by a listener, and a listener is an address AND a port.
+    Reading the sockname rather than trusting the requested value keeps the key
+    paired with what the kernel bound, which is what a client dials.
+
+    Returns ``""`` when neither is readable, which suppresses the listener-keyed
+    publication rather than filing the credential under a guess. A reader that
+    finds no entry refuses, so the empty case costs an explicit sign-in instead
+    of pointing a client at the wrong listener.
+    """
+    for addr in runner.addresses:
+        # Same sockname shape as _resolved_bound_port; a unix socket's is a str.
+        if isinstance(addr, (tuple, list)) and len(addr) >= 2 and isinstance(addr[1], int):
+            host = addr[0]
+            if isinstance(host, str) and host:
+                return host
+    return requested if isinstance(requested, str) else ""
+
+
 async def _start_site(
     site: web.TCPSite,
     port: int,
@@ -2530,14 +2551,19 @@ def _live_sibling_port(own_port: int) -> int | None:
     return None
 
 
-def _write_instance_credentials(secret_path: Path, port: int, secret: str) -> None:
+def _write_instance_credentials(secret_path: Path, port: int, host: str, secret: str) -> None:
     """Publish this gateway's internal-API credential.
 
-    Writes two files with different lifetimes:
+    Writes up to three files with different lifetimes:
 
-    * ``run/gateway-<port>.secret`` -- ALWAYS. Paired with the listener, so a
-      client that resolved a port reads the credential of the process that owns
-      that port rather than whichever gateway wrote the shared file last.
+    * ``run/gateway-<port>-<address>.secret`` -- whenever the bound address is
+      known. Names ONE listener, so a client that dialled a specific address
+      either reads the credential of the party it reached or reads nothing. A
+      port number alone cannot carry that: ``KIROCREW_BIND=::1`` leaves IPv4
+      ``127.0.0.1:<port>`` free for a co-resident to take, and a port-keyed
+      lookup would hand that co-resident this gateway's credential.
+    * ``run/gateway-<port>.secret`` -- ALWAYS. Paired with the port rather than
+      the listener, for readers that resolve a port and nothing finer.
     * ``.local_secret`` -- only when no other gateway in this data home is
       verifiably alive on a different port. Overwriting it while a sibling is
       serving is the desync this guard exists to prevent: the sibling keeps
@@ -2547,8 +2573,14 @@ def _write_instance_credentials(secret_path: Path, port: int, secret: str) -> No
       is still written in the single-instance case because pre-per-port clients
       (an older CLI, a cron script from a previous install) read only that path.
 
+    An empty *host* suppresses the listener-keyed write rather than filing the
+    credential under a guessed address: a reader that finds no entry refuses,
+    which is the safe direction.
+
     Blocking fs I/O; the caller offloads this whole function.
     """
+    if host:
+        _write_secret_file(run_marker.listener_secret_path(int(port), host), secret)
     _write_secret_file(run_marker.secret_path(int(port)), secret)
     sibling = _live_sibling_port(int(port))
     if sibling is not None:
@@ -5733,13 +5765,17 @@ async def start_dashboard(
     # owner-only lockdown on Windows), so it must not run on the
     # event loop (no-blocking-call-on-event-loop). The port is passed so the
     # credential is published per listener, not only into the shared file every
-    # gateway in this data home writes (see _write_instance_credentials).
+    # gateway in this data home writes (see _write_instance_credentials). The
+    # bound ADDRESS goes with it because a port number names a set of listeners:
+    # the same port on another address is a different party, and a client that
+    # dialled one must not resolve the other's credential.
     try:
         await asyncio.get_running_loop().run_in_executor(
             subprocess_executor(),
             _write_instance_credentials,
             _secret_path,
             _resolved_bound_port(runner, port),
+            _bind_ip,
             _internal_secret,
         )
     except OSError:
@@ -6684,13 +6720,15 @@ async def start_api_server(
     # on Windows, the owner-only DACL), so it must not run
     # on the event loop (no-blocking-call-on-event-loop). Same per-listener
     # publication as start_dashboard: both surfaces must pair the credential
-    # with the port or a client cannot tell which generation it reached.
+    # with the address AND the port, or a client that dialled one address can
+    # resolve the credential of a listener sharing only the port number.
     try:
         await asyncio.get_running_loop().run_in_executor(
             subprocess_executor(),
             _write_instance_credentials,
             _secret_path,
             _resolved_bound_port(runner, port),
+            _resolved_bound_host(runner, bind_addr),
             _internal_secret,
         )
     except OSError:

@@ -73,11 +73,85 @@ class TestPerPortCredentialFile:
         assert run_marker.read_secret(5476) == ""
 
 
+class TestListenerKeyedCredentialFile:
+    """One port number can carry several listeners; the name must separate them.
+
+    ``KIROCREW_BIND=::1`` binds the v6 loopback and leaves IPv4
+    ``127.0.0.1:<port>`` unbound, so a co-resident can hold the address a client
+    dials while this gateway holds the same port number. A name keyed by port
+    alone cannot tell the two apart, and a client resolving it sends this
+    gateway's credential to that co-resident.
+    """
+
+    def test_name_carries_both_the_port_and_the_address(self, home: Path) -> None:
+        assert (
+            run_marker.listener_secret_path(5476, "127.0.0.1").name
+            == "gateway-5476-127.0.0.1.secret"
+        )
+
+    def test_sits_beside_the_marker(self, home: Path) -> None:
+        assert (
+            run_marker.listener_secret_path(5476, "127.0.0.1").parent
+            == run_marker.marker_path(5476).parent
+        )
+
+    def test_two_addresses_on_one_port_are_two_files(self, home: Path) -> None:
+        v4 = run_marker.listener_secret_path(5476, "127.0.0.1")
+        v6 = run_marker.listener_secret_path(5476, "::1")
+        assert v4 != v6
+
+    def test_address_is_spelled_without_a_character_windows_refuses(self, home: Path) -> None:
+        # ":" is legal in an IPv6 literal and illegal in a Windows filename, so
+        # an unencoded name could not be created there at all.
+        assert ":" not in run_marker.listener_secret_file_name(5476, "::1")
+        assert run_marker.encode_bind_address("::1") == "__1"
+        assert run_marker.encode_bind_address("127.0.0.1") == "127.0.0.1"
+
+    def test_encoding_keeps_different_addresses_apart(self, home: Path) -> None:
+        encoded = {
+            run_marker.encode_bind_address(a)
+            for a in ("127.0.0.1", "0.0.0.0", "::1", "::", "fd7a:115c:a1e0::1")
+        }
+        assert len(encoded) == 5
+
+    def test_published_under_the_bound_address(self, home: Path) -> None:
+        shared = home / ".local_secret"
+        with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=None):
+            dashboard_server._write_instance_credentials(shared, 5476, "::1", "v6-secret")
+        assert (
+            run_marker.listener_secret_path(5476, "::1").read_text(encoding="utf-8").strip()
+            == "v6-secret"
+        )
+        # Nothing is filed under an address this gateway never bound, so a client
+        # dialling v4 loopback finds no entry and refuses.
+        assert not run_marker.listener_secret_path(5476, "127.0.0.1").exists()
+
+    def test_absent_address_suppresses_the_listener_entry(self, home: Path) -> None:
+        # An unreadable bind address must not be guessed at: no entry means a
+        # client refuses, which is the safe direction.
+        shared = home / ".local_secret"
+        with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=None):
+            dashboard_server._write_instance_credentials(shared, 5476, "", "mine")
+        assert not run_marker.listener_secret_path(5476, "").exists()
+        assert run_marker.read_secret(5476) == "mine"
+
+    def test_written_owner_only(self, home: Path) -> None:
+        dashboard_server._write_secret_file(
+            run_marker.listener_secret_path(7811, "127.0.0.1"), "deadbeef"
+        )
+        path = run_marker.listener_secret_path(7811, "127.0.0.1")
+        assert path.read_text(encoding="utf-8").strip() == "deadbeef"
+        if os.name == "nt":
+            pytest.skip("POSIX mode bits are not honoured on Windows")
+        mode = path.stat().st_mode & 0o777
+        assert mode == 0o600, oct(mode)
+
+
 class TestSharedFileIsNotClobberedWhileASiblingServes:
     def test_shared_file_written_when_this_is_the_only_gateway(self, home: Path) -> None:
         shared = home / ".local_secret"
         with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=None):
-            dashboard_server._write_instance_credentials(shared, 5476, "mine")
+            dashboard_server._write_instance_credentials(shared, 5476, "127.0.0.1", "mine")
         assert shared.read_text() == "mine"
         assert run_marker.read_secret(5476) == "mine"
 
@@ -85,7 +159,7 @@ class TestSharedFileIsNotClobberedWhileASiblingServes:
         shared = home / ".local_secret"
         shared.write_text("incumbent")
         with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=5476):
-            dashboard_server._write_instance_credentials(shared, 7811, "newcomer")
+            dashboard_server._write_instance_credentials(shared, 7811, "127.0.0.1", "newcomer")
         # The incumbent keeps comparing against "incumbent"; clients that resolve
         # its port must keep reading it.
         assert shared.read_text() == "incumbent"
@@ -159,9 +233,9 @@ class TestClientReadsTheCredentialForThePortItDials:
 
         shared = home / ".local_secret"
         with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=None):
-            dashboard_server._write_instance_credentials(shared, 5476, "incumbent")
+            dashboard_server._write_instance_credentials(shared, 5476, "127.0.0.1", "incumbent")
         with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=5476):
-            dashboard_server._write_instance_credentials(shared, 7811, "newcomer")
+            dashboard_server._write_instance_credentials(shared, 7811, "127.0.0.1", "newcomer")
 
         with mock.patch.object(mcp_core, "_api_port", return_value=5476):
             assert mcp_core._internal_secret() == "incumbent"
@@ -277,7 +351,7 @@ class TestEphemeralBindPublishesUnderTheRealPort:
     def test_credential_lands_under_the_assigned_port_not_zero(self, home: Path) -> None:
         shared = home / ".local_secret"
         with mock.patch.object(dashboard_server, "_live_sibling_port", return_value=5476):
-            dashboard_server._write_instance_credentials(shared, 41234, "ephemeral")
+            dashboard_server._write_instance_credentials(shared, 41234, "127.0.0.1", "ephemeral")
         assert run_marker.read_secret(41234) == "ephemeral"
         assert run_marker.read_secret(0) == ""
 

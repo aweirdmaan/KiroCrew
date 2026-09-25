@@ -94,8 +94,38 @@ def secret_file_name(port: int) -> str:
     pod's credential out of the pod's own isolated home, which :func:`secret_path`
     cannot name because it resolves against the CALLING process's data home. The
     name is produced here so the reader and the writer share one spelling.
+
+    Names a PORT, which is a set of listeners rather than one: several addresses
+    can carry the same port number, so a reader that must know WHICH listener it
+    reached wants :func:`listener_secret_file_name` instead.
     """
     return f"{_MARKER_PREFIX}{int(port)}{_SECRET_SUFFIX}"
+
+
+def encode_bind_address(host: str) -> str:
+    """Filename-safe spelling of the bind address *host*.
+
+    ``:`` is legal in an IPv6 literal and illegal in a Windows filename, so it is
+    the one character that has to change. The mapping is injective over IP
+    literals, which draw on hex digits, ``.`` and ``:`` alone, so two different
+    addresses can never collide on one file name -- which is the whole property
+    the caller is buying.
+    """
+    return host.replace(":", "_")
+
+
+def listener_secret_file_name(port: int, host: str) -> str:
+    """File name of the credential for the listener at *host* on *port*.
+
+    A listener is an address AND a port. One port number can carry several
+    listeners at once -- ``KIROCREW_BIND=::1`` binds the v6 loopback and leaves
+    IPv4 ``127.0.0.1:<port>`` free for anything else to take -- so a name keyed
+    by port alone names a SET, and a reader resolving it can be handed the
+    credential of a listener it never spoke to. Keying the name by both makes
+    that unrepresentable: the reader asks for the address it dialled and either
+    gets that listener's credential or nothing.
+    """
+    return f"{_MARKER_PREFIX}{int(port)}-{encode_bind_address(host)}{_SECRET_SUFFIX}"
 
 
 def _start_path_for(path: Path) -> Path:
@@ -253,6 +283,18 @@ def secret_path(port: int) -> Path:
     dir on the ``is_sensitive_path`` floor, and is written ``0600``.
     """
     return _run_dir() / secret_file_name(port)
+
+
+def listener_secret_path(port: int, host: str) -> Path:
+    """Path of the credential for the listener at *host* on *port*.
+
+    Sits beside :func:`secret_path` in the same owner-only ``run/`` dir and is
+    written ``0600`` the same way. The two hold the same value for the same
+    gateway generation and differ only in what their names identify: this one
+    names ONE listener, which is what a client that dialled a specific address
+    needs in order to know the credential belongs to the party it reached.
+    """
+    return _run_dir() / listener_secret_file_name(port, host)
 
 
 def read_secret(port: int) -> str:
