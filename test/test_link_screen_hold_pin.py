@@ -388,8 +388,17 @@ def test_held_site_screens_and_resolves_inside_one_hold(module: str, func: str) 
         body = ast.Module(body=block.body, type_ignores=[])
         calls = [node for node in ast.walk(body) if isinstance(node, ast.Call)]
         screened = [c for c in calls if _verb(c) in SCREENS]
+        # A screen is never its own use. The screens reach a primitive themselves
+        # -- the junction check asks ``islink`` -- so the resolver set admits them,
+        # and counting one as the use lets a block satisfy this assertion with the
+        # screen alone while the write it is supposed to cover sits outside the hold.
         used = [
-            c for c in calls if _verb(c) in resolvers and _verb(c) not in NEVER and not _anchored(c)
+            c
+            for c in calls
+            if _verb(c) in resolvers
+            and _verb(c) not in SCREENS
+            and _verb(c) not in NEVER
+            and not _anchored(c)
         ]
         if screened and used:
             return
