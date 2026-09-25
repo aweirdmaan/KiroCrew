@@ -26,6 +26,8 @@ one, or merges the two.
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -527,6 +529,107 @@ def test_the_owner_count_is_bounded_and_evicts_the_oldest():
     assert len(owners) == PANEL_OWNER_LIMIT
     assert keys[0] not in owners, "the oldest publish must be the one evicted"
     assert set(owners) == set(keys[1:])
+
+
+# --------------------------------------------- what the sanctioned reader sees
+
+
+#: The reference page's own reader hint, as the paragraph it is written in. The
+#: pins below derive what a reader is promised from THIS text rather than from a
+#: list kept here, so a hint that grows a field the record does not carry reds.
+#: The panel type is the page's last documented type, so its hint is the last one.
+_READER_HINT_HEAD = "**Reader hint**"
+
+
+def _reader_hint() -> str:
+    """The panel type's reader-hint paragraph from the crew-log reference page."""
+    page = (
+        Path(__file__).resolve().parents[1] / "docs" / "reference" / "crew-log" / "session-types.md"
+    )
+    text = page.read_text(encoding="utf-8")
+    # The panel type is the page's last documented type, so its hint is the last
+    # one on the page; sliced to the blank line that ends the paragraph.
+    head = text.rindex(_READER_HINT_HEAD)
+    para = text[head:].split("\n\n", 1)[0]
+    assert "crew_key" in para, "the panel type's reader hint moved; re-anchor this"
+    return para
+
+
+def test_the_record_a_reader_is_told_to_select_carries_the_whole_shape():
+    """Every field the fold's top level has, the per-owner record has too.
+
+    The reference page tells a reader to select the record under the asking crew's
+    ``crew_key``, so that per-owner record -- not the top level -- is the shape the
+    sanctioned reader actually gets. A field reachable only from the top level is
+    therefore a field no reader following the documented path can see.
+
+    Derived by COMPARING the two shapes rather than by listing the fields, so a
+    tenth field set on the top level alone reds this without the test being edited.
+    ``owners`` is the container that holds the per-owner records, so it is the one
+    key the top level is expected to have alone.
+    """
+    _unit()
+    _publish(title="fleet", data={"cycle": 47})
+
+    value = _folded()
+    mine = value["owners"][KEY]
+    top_only = set(value) - set(mine)
+    assert top_only == {"owners"}, f"reachable only from the top level: {sorted(top_only)}"
+
+
+def test_every_field_the_reader_hint_names_is_on_the_record_it_names():
+    """The hint may not promise a field the record it points at does not carry.
+
+    This is the contradiction itself, pinned from both ends: the hint names the
+    selection (the record under the crew's ``crew_key``) and it names fields in
+    backticks. A field named there that the selected record lacks is a documented
+    contract the implementation does not keep, which is exactly how
+    ``owners_omitted`` came to be unreachable -- it was set on the top level while
+    the hint sent every reader one level down.
+    """
+    _unit()
+    _publish(title="fleet", data={"cycle": 47})
+    mine = _folded()["owners"][KEY]
+
+    named = set(re.findall(r"`([a-z_]+)`", _reader_hint()))
+    assert named, "the hint names no field in backticks; re-anchor this pin"
+    missing = sorted(name for name in named if name not in mine)
+    assert not missing, f"the hint names {len(named)} fields; absent from the record: {missing}"
+
+
+def test_an_eviction_is_visible_from_the_surviving_crews_own_record():
+    """The reader path end to end: select by ``crew_key``, read the eviction count.
+
+    Without this the fold's own promise is unkeepable by the documented reader: a
+    slot that evicted a crew reads exactly like a slot that crew never published
+    on, and the count that separates them sat one level above where the reader was
+    sent.
+    """
+    _unit()
+    keys = [chr(ord("c") + i) * 40 for i in range(PANEL_OWNER_LIMIT + 2)]
+    for i, key in enumerate(keys):
+        _publish(crew_key=key, title=f"crew-{i}", data={"cycle": i})
+
+    value = _folded()
+    survivor = keys[-1]
+    assert survivor in value["owners"], "the newest publisher must have survived"
+    assert value["owners"][survivor]["owners_omitted"] == 2
+    # The same count the top level reports, so the two cannot drift apart.
+    assert value["owners_omitted"] == value["owners"][survivor]["owners_omitted"]
+
+
+def test_a_slot_that_evicted_nobody_says_so_on_the_selected_record():
+    """The count's other direction: zero is an answer, not an absent field.
+
+    A reader that cannot distinguish "no eviction" from "this fold does not report
+    evictions" is back to guessing, so the field is present on an uncontested slot
+    too.
+    """
+    _unit()
+    _publish(title="fleet", data={"cycle": 47})
+
+    mine = _folded()["owners"][KEY]
+    assert mine["owners_omitted"] == 0
 
 
 # ------------------------------------------------------------------- the caps

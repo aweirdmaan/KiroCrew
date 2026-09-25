@@ -1005,6 +1005,124 @@ def test_every_refusal_in_the_crew_resolver_audits_its_denial():
     assert audits(tree.body[0].body) == []
 
 
+#: RED on current main, and it stays red until the direction for the drawer's own
+#: response is ruled on: widen the response to serve what the fold carries, or drop
+#: a carry that has no consumer. ``strict`` on purpose, following
+#: ``test_slot_detail_disk_window_authority_7526.py`` -- whoever lands either fix
+#: gets a failure here telling them to delete this marker, so the reproduction
+#: cannot rot into a silently-passing test.
+NO_CONSUMER = pytest.mark.xfail(
+    strict=True,
+    reason="#13896: _panel_record carries three fields the response and CrewPanelMeta both drop",
+)
+
+
+def _carried_by_panel_record() -> frozenset[str]:
+    """Field names ``_panel_record`` copies off the fold onto the stored record.
+
+    Read out of the function's own AST rather than listed here, so a fourth field
+    added to that carry is covered without this test being edited -- which is the
+    whole point: the gap this pin describes is one a hand-kept list reproduces.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(routes._panel_record)))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List)):
+            for element in node.iter.elts:
+                if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                    names.add(element.value)
+    return frozenset(names)
+
+
+def _served_by_the_drawer_response() -> frozenset[str]:
+    """Keys the drawer route's own ``"panel"`` object puts on the wire.
+
+    Taken from the response literal in ``api_member_panel`` rather than by calling
+    the route, because the question is what the CODE can ever serve, not what one
+    fixture happens to produce.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(routes.api_member_panel)))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            named_panel = isinstance(key, ast.Constant) and key.value == "panel"
+            if named_panel and isinstance(value, ast.Dict):
+                return frozenset(
+                    entry.value
+                    for entry in value.keys
+                    if isinstance(entry, ast.Constant) and isinstance(entry.value, str)
+                )
+    raise AssertionError("the drawer response no longer builds its panel as a literal")
+
+
+def _declared_by_crew_panel_meta() -> frozenset[str]:
+    """Fields the browser client declares for a panel, from the TypeScript source."""
+    import re
+    from pathlib import Path
+
+    client = Path(routes.__file__).resolve().parents[3].parent / "website/src/api/client.ts"
+    text = client.read_text(encoding="utf-8")
+    start = text.index("export interface CrewPanelMeta {")
+    body = text[start : text.index("}", start)]
+    return frozenset(re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", body, re.MULTILINE))
+
+
+@NO_CONSUMER
+def test_every_field_the_drawer_read_carries_has_a_consumer():
+    """A field the read path goes out of its way to carry must reach somebody.
+
+    ``_panel_record`` copies fields off the fold onto the record it returns, and the
+    route then builds its response as a hand-typed literal. Anything carried but not
+    named there is dropped at the wire on every branch, and ``CrewPanelMeta`` -- the
+    browser's own declaration -- is the other place a consumer could live. A field
+    in neither is live code with nothing downstream of it.
+
+    Both sides are enumerated FROM SOURCE so a future panel-serving route, or a
+    fourth carried field, is covered by the same assertion rather than by somebody
+    remembering to extend a list.
+    """
+    carried = _carried_by_panel_record()
+    served = _served_by_the_drawer_response()
+    declared = _declared_by_crew_panel_meta()
+    assert carried, "the carry loop moved; re-anchor this pin"
+    assert served, "the response literal moved; re-anchor this pin"
+    assert declared, "CrewPanelMeta moved; re-anchor this pin"
+
+    orphans = sorted(carried - (served | declared))
+    assert not orphans, (
+        f"{len(carried)} carried, {len(served)} served, {len(declared)} declared; "
+        f"carried with no consumer: {orphans}"
+    )
+
+
+def test_the_consumer_pin_reads_all_three_sides_before_it_judges():
+    """The control for the pin above, and it must pass whichever direction is taken.
+
+    A strict xfail proves a disagreement exists; it cannot prove the three readers
+    that measure it work, because a reader returning nothing would fail the same
+    way. Asserted here so the red above is a real disagreement rather than a broken
+    parse: each side is non-empty, and the served set is exactly what the response
+    declares, which is the side a reader can check by eye.
+    """
+    carried = _carried_by_panel_record()
+    served = _served_by_the_drawer_response()
+    declared = _declared_by_crew_panel_meta()
+    assert len(carried) == 3, sorted(carried)
+    assert served == {"template", "title", "crew", "published_at", "data"}, sorted(served)
+    # The browser declares the same five, which is why the carry reaches no reader
+    # through that side either.
+    assert served == declared, sorted(served ^ declared)
+
+
 async def test_the_unresolved_session_denial_is_audited(vetted, monkeypatch):
     """The finding's own case, exercised rather than only asserted structurally."""
     events: list[dict[str, Any]] = []

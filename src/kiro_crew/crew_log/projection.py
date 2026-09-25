@@ -3909,11 +3909,22 @@ def _panel_step(state: dict[str, Any], entry: Entry) -> None:
     state["newest"] = key
 
 
-def _panel_owner_record(own: Mapping[str, Any]) -> dict[str, Any]:
+def _panel_owner_record(own: Mapping[str, Any], owners_omitted: int) -> dict[str, Any]:
     """One owner's record, in the shape the drawer already consumes.
 
     ``history_omitted`` is the bound speaking: it is how a reader tells a history
     trimmed at its cap from one that holds every cycle the crew ever published.
+
+    *owners_omitted* is the SLOT's own eviction count, and it is carried on every
+    record because this is the record a reader selects: the reader hint in
+    ``docs/reference/crew-log/session-types.md`` says to read the fold for the
+    member's slot and then take the record under the asking crew's ``crew_key``. A
+    slot-level count reachable only from the top level is therefore invisible to
+    that reader, while the count exists precisely so a reader can tell a slot that
+    evicted this crew from a slot this crew never published on -- the one question
+    an empty record cannot answer about itself. Required rather than defaulted,
+    because a caller that omitted it would report "nothing was evicted", which is a
+    wrong answer rather than a missing one.
     """
     return {
         "schema": PANEL_SCHEMA_VERSION,
@@ -3926,6 +3937,7 @@ def _panel_owner_record(own: Mapping[str, Any]) -> dict[str, Any]:
         "history": [dict(row) for row in own["history"]],
         "publishes": own["publishes"],
         "history_omitted": _as_int(own.get("history_omitted")),
+        "owners_omitted": owners_omitted,
     }
 
 
@@ -3949,13 +3961,16 @@ def _panel_render(state: dict[str, Any]) -> dict[str, Any]:
 
     ``owners_omitted`` is the owner bound speaking, beside each record's own
     ``history_omitted``: without it a slot that evicted a crew reads exactly like a
-    slot that crew never published on.
+    slot that crew never published on. It sits on EVERY record here, the per-owner
+    ones included, because the per-owner record is the one a reader is told to
+    select -- a count only the top level carried would be unreachable by the reader
+    the reference page sanctions.
     """
     owners: dict[str, Any] = state["owners"]
+    omitted = _as_int(state.get("owners_omitted"))
     newest = owners.get(state["newest"])
-    record = _panel_owner_record(newest if newest is not None else _panel_owner_start())
-    record["owners"] = {key: _panel_owner_record(own) for key, own in owners.items()}
-    record["owners_omitted"] = _as_int(state.get("owners_omitted"))
+    record = _panel_owner_record(newest if newest is not None else _panel_owner_start(), omitted)
+    record["owners"] = {key: _panel_owner_record(own, omitted) for key, own in owners.items()}
     return record
 
 
