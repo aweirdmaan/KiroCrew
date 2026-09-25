@@ -3915,16 +3915,15 @@ def _panel_owner_record(own: Mapping[str, Any], owners_omitted: int) -> dict[str
     ``history_omitted`` is the bound speaking: it is how a reader tells a history
     trimmed at its cap from one that holds every cycle the crew ever published.
 
-    *owners_omitted* is the SLOT's own eviction count, and it is carried on every
-    record because this is the record a reader selects: the reader hint in
-    ``docs/reference/crew-log/session-types.md`` says to read the fold for the
-    member's slot and then take the record under the asking crew's ``crew_key``. A
-    slot-level count reachable only from the top level is therefore invisible to
-    that reader, while the count exists precisely so a reader can tell a slot that
-    evicted this crew from a slot this crew never published on -- the one question
-    an empty record cannot answer about itself. Required rather than defaulted,
-    because a caller that omitted it would report "nothing was evicted", which is a
-    wrong answer rather than a missing one.
+    *owners_omitted* is the SLOT's own truncation count, and that is the whole of
+    what it says: this slot has evicted that many owners. It is carried on each
+    record so a reader holding one does not need a second lookup to learn the slot
+    truncated. It deliberately does NOT tell a crew whether IT was the evicted one:
+    eviction deletes the owner's entry outright, so a crew that was evicted has no
+    record here to read anything from. That reader is answered by the fold's
+    top-level count instead, which is where the reference page sends it. Required
+    rather than defaulted, because a caller that omitted it would report "this slot
+    evicted nobody", which is a wrong answer rather than a missing one.
     """
     return {
         "schema": PANEL_SCHEMA_VERSION,
@@ -3961,10 +3960,12 @@ def _panel_render(state: dict[str, Any]) -> dict[str, Any]:
 
     ``owners_omitted`` is the owner bound speaking, beside each record's own
     ``history_omitted``: without it a slot that evicted a crew reads exactly like a
-    slot that crew never published on. It sits on EVERY record here, the per-owner
-    ones included, because the per-owner record is the one a reader is told to
-    select -- a count only the top level carried would be unreachable by the reader
-    the reference page sanctions.
+    slot that crew never published on. It is on the top level AND on each per-owner
+    record, and the TOP LEVEL is the one that answers the question: eviction deletes
+    the owner's entry, so a crew that was evicted finds nothing under its own
+    ``crew_key`` and has no per-owner record to read. A reader that finds no record
+    for itself reads the count here. The per-owner copies say only that this slot
+    truncated, which saves a reader holding one record a second lookup.
     """
     owners: dict[str, Any] = state["owners"]
     omitted = _as_int(state.get("owners_omitted"))
