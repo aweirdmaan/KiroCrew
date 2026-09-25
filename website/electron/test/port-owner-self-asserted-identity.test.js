@@ -101,9 +101,104 @@ function adjudicatedComparisons() {
     if (!kind) continue;
     const probe = probeBehind(m[1], m.index);
     if (!probe) continue;
-    out.push({ probe, sentinel, kind });
+    out.push({
+      probe, sentinel, kind, start: m.index, end: m.index + m[0].length,
+      operand: m[1].trim().replace(/^\(+|\)+$/g, "").trim(),
+    });
   }
   return out;
+}
+
+/** 1-based line number of `offset` in the supervisor source. */
+function lineOf(offset) {
+  return SUPERVISOR.slice(0, offset).split("\n").length;
+}
+
+/**
+ * Every place either probe is CALLED, found by the call itself rather than by
+ * the shape of what is done with the result. This is what keeps the enumeration
+ * fail-CLOSED: the comparison scanner understands two shapes, and a third --
+ * a `switch`, a ternary chain, an `includes` on a sentinel array -- would
+ * otherwise be skipped in silence while the pin still reported green. Every site
+ * found here must be accounted for by the scanner or by a declared consumer, so
+ * an unrecognised shape is a FAILURE that names its line, not an omission.
+ */
+function probeCallSites() {
+  const out = [];
+  const re = new RegExp(`\\b(${OCCUPANCY_PROBE}|${IDENTITY_PROBE})\\s*\\(`, "g");
+  for (let m = re.exec(SUPERVISOR); m; m = re.exec(SUPERVISOR)) {
+    if (/\bfunction\s+$/.test(SUPERVISOR.slice(Math.max(0, m.index - 16), m.index))) continue;
+    out.push({ probe: m[1], offset: m.index, line: lineOf(m.index) });
+  }
+  return out;
+}
+
+// Where a probe's result may legitimately go WITHOUT being compared here: the
+// pure classifiers that consume the owner vocabulary, and a bare `return` out of
+// the thin wrappers. Each is a judgement made elsewhere and covered by its own
+// module's tests, so the requirement is that the value's destination be one of
+// these -- not that it be unused.
+const DECLARED_CONSUMERS = [
+  "decideGatewayAction",
+  "classifyAdoptedGateway",
+  "classifyAuthBlock",
+];
+
+/** The statement containing `offset`, by depth-aware scan to its boundaries. */
+function statementAround(offset) {
+  let depth = 0;
+  let start = 0;
+  for (let i = offset; i >= 0; i -= 1) {
+    const ch = SUPERVISOR[i];
+    if (ch === ")" || ch === "]" || ch === "}") depth += 1;
+    else if (ch === "(" || ch === "[" || ch === "{") {
+      if (depth === 0) { start = i + 1; break; }
+      depth -= 1;
+    } else if (ch === ";" && depth === 0) { start = i + 1; break; }
+  }
+  depth = 0;
+  let end = SUPERVISOR.length;
+  for (let i = offset; i < SUPERVISOR.length; i += 1) {
+    const ch = SUPERVISOR[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      if (depth === 0) { end = i; break; }
+      depth -= 1;
+    } else if (ch === ";" && depth === 0) { end = i; break; }
+  }
+  return SUPERVISOR.slice(start, end);
+}
+
+/** Why `site` is accounted for, or null when nothing here explains it. */
+function accountFor(site, comparisons) {
+  const inline = comparisons.find((c) => site.offset >= c.start && site.offset < c.end);
+  if (inline) return `compared against "${inline.sentinel}"`;
+  const statement = statementAround(site.offset);
+  const assigned = statement.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
+  if (assigned) {
+    const name = assigned[1];
+    // Only this site's OWN binding counts. A same-named binding elsewhere in the
+    // file is a different variable, and crediting its comparison here would
+    // account for a site whose own use was never looked at -- which is the
+    // silent skip this whole test exists to prevent.
+    const rebound = new RegExp(`(?:const|let|var)\\s+${name}\\s*=`, "g");
+    let nextBinding = SUPERVISOR.length;
+    for (let m = rebound.exec(SUPERVISOR); m; m = rebound.exec(SUPERVISOR)) {
+      if (m.index > site.offset) { nextBinding = m.index; break; }
+    }
+    const mine = (at) => at > site.offset && at < nextBinding;
+    if (comparisons.some((c) => c.operand === name && mine(c.start))) {
+      return `assigned to ${name}, compared`;
+    }
+    for (const fn of DECLARED_CONSUMERS) {
+      const call = new RegExp(`\\b${fn}\\s*\\([\\s\\S]{0,400}?\\b${name}\\b`, "g");
+      for (let m = call.exec(SUPERVISOR); m; m = call.exec(SUPERVISOR)) {
+        if (mine(m.index)) return `assigned to ${name}, consumed by ${fn}`;
+      }
+    }
+  }
+  if (/\breturn\b/.test(statement)) return "returned by a wrapper";
+  return null;
 }
 
 /** The body of `name` in `source`, by brace balance from its declaration. The
@@ -174,16 +269,36 @@ describe("port occupancy is decided without a process's self-asserted identity",
     );
   });
 
-  test("the enumeration adjudicates both probes, so a pass is not vacuous", () => {
+  test("every probe call site is accounted for, whatever shape it is written in", () => {
+    const comparisons = adjudicatedComparisons();
+    const sites = probeCallSites();
+    const unaccounted = sites
+      .map((s) => ({ ...s, why: accountFor(s, comparisons) }))
+      .filter((s) => !s.why);
+    assert.deepStrictEqual(
+      unaccounted.map((s) => `line ${s.line}: ${s.probe}`),
+      [],
+      "a probe result goes somewhere this pin cannot classify, so the pairing "
+      + "assertions above silently skip it. Either compare it against a sentinel, "
+      + "or add its destination to DECLARED_CONSUMERS with a reason",
+    );
+    assert.ok(sites.length > 0, "the call-site scan found no probe calls at all");
+  });
+
+  test("the adjudicated counts hold at their floor, so no site drops out unseen", () => {
     const seen = adjudicatedComparisons();
     const byKind = (k) => seen.filter((c) => c.kind === k).length;
+    // Floors, not equalities: a new comparison is welcome and a REMOVED one is
+    // the regression. Raise these when a site is added on purpose.
     assert.ok(
-      byKind("occupancy") > 0,
-      `no occupancy comparison was resolved; the scan found ${seen.length} in total`,
+      byKind("occupancy") >= 4,
+      `occupancy comparisons fell to ${byKind("occupancy")}, below the floor of 4 `
+      + "-- a wait stopped resolving to the occupancy probe, or was rewritten in a "
+      + "shape the scanner does not read",
     );
     assert.ok(
-      byKind("identity") > 0,
-      `no identity comparison was resolved; the scan found ${seen.length} in total`,
+      byKind("identity") >= 2,
+      `identity comparisons fell to ${byKind("identity")}, below the floor of 2`,
     );
   });
 
