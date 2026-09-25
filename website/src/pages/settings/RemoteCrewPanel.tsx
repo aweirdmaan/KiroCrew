@@ -70,6 +70,7 @@ import {
 } from '../../components/ui/dropdown-menu'
 import ErrorNotice from '../../components/ErrorNotice'
 import ErrorBoundary from '../../components/ErrorBoundary'
+import { announceChainedCrew } from '../../lib/chainAnnounce'
 import {
   BUILTIN_REMOTE_PROVISIONER_KINDS,
   canRenderRemoteProvisionerKind,
@@ -1777,7 +1778,24 @@ export function RemoteCrewPanel() {
   const connectMutation = useMutation({
     mutationFn: (id: string) => api.connectInstance(id),
     onMutate: () => { setActionErr(null); setDiagNote(null) },
-    onSuccess: st => { if (st.state !== 'connected') setActionErr(st.error || i18nT('pages.settings.instancesPanel.connection_did_not_complete_try_diagnose_for_det')) },
+    onSuccess: (st, id) => {
+      if (st.state !== 'connected') { setActionErr(st.error || i18nT('pages.settings.instancesPanel.connection_did_not_complete_try_diagnose_for_det')); return }
+      // Inside a pane, this gateway is itself a crew of the one showing the page,
+      // so a crew connected here is reachable from up there only through our hop —
+      // and the host never sees our registry. Tell it. A no-op at top level. The
+      // notice carries no credential: the host mints its own over the credential
+      // it already holds for us.
+      const inst = instancesQuery.data?.instances?.find(i => i.id === id)
+      if (inst && st.local_port) {
+        announceChainedCrew({
+          id,
+          name: inst.name,
+          sshHost: inst.connection_method === 'ssh' ? inst.ssh_host : inst.ssm_target,
+          remotePort: inst.remote_port,
+          port: st.local_port,
+        })
+      }
+    },
     onError: (e, id) => setActionErr(i18nT('pages.settings.instancesPanel.connect_failed', { id, error: errMsg(e, i18nT('pages.settings.instancesPanel.unknown_error')) })),
     onSettled: reloadInstances,
   })

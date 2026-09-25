@@ -2248,6 +2248,11 @@ export interface InstanceView {
   ssm_run_as: string
   /** Provisioner that created this crew, when it came from a launcher. */
   provisioner_id?: string
+  /** Set when this crew is reached by riding another crew's hop: that crew's id,
+   *  and the loopback port ON THAT CREW where its own forward listens. Both empty
+   *  for a top-level crew, which is every crew added before chaining existed. */
+  via_instance_id?: string
+  via_remote_port?: number
   was_connected: boolean
   status: InstanceTunnelStatus
 }
@@ -2267,6 +2272,12 @@ export interface AddInstanceBody {
   aws_profile?: string
   aws_region?: string
   ssm_run_as?: string
+  /** Chain this crew behind one already configured here: that crew's id, plus the
+   *  loopback port on it where its own forward to this crew listens. The gateway
+   *  decides whether the chain is allowed (depth cap, parent transport) and
+   *  refuses with a `chain_*` code. */
+  via_instance_id?: string
+  via_remote_port?: number
   id?: string
 }
 

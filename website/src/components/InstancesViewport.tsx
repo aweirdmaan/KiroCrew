@@ -34,12 +34,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { Trans } from 'react-i18next'
-import { api } from '../api/client'
+import { api, type InstanceView } from '../api/client'
+import { CHAINED_CREW_MESSAGE } from '../lib/chainAnnounce'
 import { WARM_SET_CAP_AUTO_CEILING } from '../utils/remoteCrew'
 import { SettingsLink } from './SettingsLink'
 import { useAppDispatch, useAppSelector, useAppStore } from '../store'
 import { clearPaneReady, removeWarm, setActiveId, setPaneReady, setUnread, setWarm } from '../store/instancesSlice'
-import InstanceTabBar, { visibleInstanceTabs, useCrewPins, toggleCrewPin, useCrewSwitcherStableOrder, setStableOrder } from './InstanceTabBar'
+import InstanceTabBar, { visibleInstanceTabs, chainRows, useCrewPins, toggleCrewPin, useCrewSwitcherStableOrder, setStableOrder } from './InstanceTabBar'
 import { parseLoopbackOriginPort, resolveTunnelOrigin } from '../lib/tunnelOrigin'
 import {
   CURSOR_AWAY_CANCEL_TYPE,
@@ -104,6 +105,15 @@ const AUTO_WARM_STAGGER_MS = 1_500
 // every reload, so resetting there would clear the count once per re-mint and
 // leave the very loop this cap exists to bound running unbounded.
 const MAX_REACTIVE_REMINTS = 3
+
+// Caps on the two free-text fields of a pane's chained-crew notice. The payload
+// crosses a postMessage boundary, so it is untrusted length as well as untrusted
+// content: the gateway validates the charset and refuses a malformed value, and
+// these bound what is sent to it in the first place. Sized past any honest value
+// — a crew name is a label a person typed, and a host string is an ssh alias or
+// an FQDN, which DNS itself caps at 253.
+const CHAINED_NAME_MAX = 200
+const CHAINED_HOST_MAX = 255
 
 /** Parse a ``<int>[hm]`` TTL (e.g. "20h", "30m") to seconds; 0 if unparseable. */
 function ttlToSeconds(ttl: string): number {
@@ -237,7 +247,7 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
   // recorded its readiness, so the pane can stop re-announcing without mistaking
   // an ordinary model broadcast for an ack — see EmbeddedHostBridge.
   const postAckToRef = useRef<(id: string) => void>(() => {})
-  const instancesRef = useRef<Array<{ id: string; name?: string }>>([])
+  const instancesRef = useRef<InstanceView[]>([])
 
   // Whether `refreshToken` would actually mint for this id right now: no mint
   // already in flight, and outside the rate window. Split out of refreshToken so
@@ -277,6 +287,66 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
       }
     },
     [dispatch, canRefreshNow],
+  )
+
+  // Adopt a crew a pane just connected, as a top-level tab of ours.
+  //
+  // `parentId` is the pane's own instance id here, established by its ORIGIN
+  // resolving to a warm tunnel port — not by anything in the payload. Everything
+  // in `raw` came from frame code, so it is shape-checked before it is used and
+  // then handed to the gateway, which owns the two decisions that matter: whether
+  // the chain is too deep, and whether it closes a loop back onto us.
+  //
+  // Idempotent by (parent, host): a pane re-announces on every reconnect, and its
+  // loopback port changes each time. An existing row is re-pointed at the new port
+  // rather than duplicated, which is also what repairs a chain after the pane's own
+  // gateway restarts.
+  const adoptChainedCrew = useCallback(
+    async (parentId: string, raw: unknown) => {
+      const d = (raw ?? {}) as Record<string, unknown>
+      const port = Number(d.port)
+      const remotePort = Number(d.remotePort)
+      const name = typeof d.name === 'string' ? d.name.slice(0, CHAINED_NAME_MAX) : ''
+      const host = typeof d.sshHost === 'string' ? d.sshHost.slice(0, CHAINED_HOST_MAX) : ''
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return
+      if (!name || !host) return
+      const existing = instancesRef.current.find(
+        i => i.via_instance_id === parentId && i.ssh_host === host,
+      )
+      try {
+        if (existing) {
+          if (existing.via_remote_port === port) return
+          await api.updateInstance(existing.id, { via_remote_port: port })
+          paneLog('chain-repointed', { id: existing.id, parentId, port })
+        } else {
+          const added = await api.addInstance({
+            name,
+            ssh_host: host,
+            // A crew's own gateway port is a record, not a dial target from here.
+            // An out-of-range value is dropped rather than refused: the row is
+            // still usable without it, and the hop port is what we forward to.
+            ...(Number.isInteger(remotePort) && remotePort >= 1 && remotePort <= 65535
+              ? { remote_port: remotePort }
+              : {}),
+            via_instance_id: parentId,
+            via_remote_port: port,
+          })
+          paneLog('chain-added', { id: added.id, parentId, port })
+        }
+        void queryClient.invalidateQueries({ queryKey: ['instances'] })
+      } catch (err) {
+        // A refusal is the expected outcome for a chain that is too deep or that
+        // loops, and it belongs on the pane's own Remote Crew panel, which already
+        // shows the gateway's reason for the connect it made. Journaling it here is
+        // what makes the hub's side of the decision visible at all.
+        paneLog('chain-refused', {
+          parentId,
+          port,
+          error: (err as Error)?.message || 'unknown',
+        })
+      }
+    },
+    [queryClient],
   )
 
   // Pre-mint + warm one connected instance without surfacing it. Cheap when the
@@ -448,6 +518,18 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
         ) {
           dispatch(setActiveId(target))
         }
+      } else if (data.type === CHAINED_CREW_MESSAGE) {
+        // A pane connected a crew of its own. Its gateway is a crew of OURS, so
+        // that further crew is reachable from here only by riding the hop we
+        // already hold to the pane — and we never see the pane's registry, which
+        // is why it has to tell us.
+        //
+        // The SENDER is already trusted: its origin resolved to a currently-warm
+        // tunnel port above, and `id` is that pane's instance id here, which is
+        // the parent of the chain. The PAYLOAD is not trusted — shape-checked
+        // here, and the gateway then applies the depth cap and the cycle guard,
+        // which are the decisions no frame may make.
+        void adoptChainedCrew(id, data)
       } else if (data.type === 'mc-set-crew-pin') {
         // A pin was toggled inside an embedded pane. It has no access to the
         // parent's preference store from its own iframe realm, so it relays the
@@ -593,7 +675,7 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [dispatch, refreshToken, canRefreshNow, currentPortToId, stopPaneCursorWatch])
+  }, [dispatch, refreshToken, canRefreshNow, currentPortToId, stopPaneCursorWatch, adoptChainedCrew])
 
   // Proactive refresh: when an embedded token passes REFRESH_AT_ELAPSED_FRAC of
   // its TTL, re-mint and reload that iframe ahead of the cap. Skips the active
@@ -902,13 +984,21 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
   const buildModelFor = useCallback(
     (id: string) => {
       const insts = instancesQuery.data?.instances ?? []
-      const tabs = visibleInstanceTabs(insts, warm).map(i => ({
-        id: i.id,
-        name: i.name,
-        sshHost: i.ssh_host,
-        state: i.status?.state,
-        unread: unread[i.id] || 0,
-      }))
+      // Ordered as a tree, exactly as the local bar orders it, so a pane's own
+      // switcher shows the same shape the window's does. A pane cannot derive
+      // this: it never sees the host's registry.
+      const tabs = chainRows(visibleInstanceTabs(insts, warm)).map(
+        ({ inst: i, depth, parentName, reachable }) => ({
+          id: i.id,
+          name: i.name,
+          sshHost: i.ssh_host,
+          state: i.status?.state,
+          unread: unread[i.id] || 0,
+          depth,
+          reachable,
+          pathName: parentName ? `${parentName} \u203a ${i.name}` : '',
+        }),
+      )
       const selfInst = insts.find(i => i.id === id)
       const self = selfInst
         ? {

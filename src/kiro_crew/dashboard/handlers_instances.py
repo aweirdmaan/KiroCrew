@@ -51,11 +51,14 @@ from kiro_crew.instances.constants import (
 )
 from kiro_crew.instances.registry import (
     DEFAULT_REMOTE_PORT,
+    MAX_VIA_HOPS,
     DuplicateInstanceError,
     InstanceNotFoundError,
     InstancesError,
     InstancesRegistry,
     InvalidInstanceError,
+    ancestor_ids,
+    descendant_ids,
     validate_ttl,
 )
 from kiro_crew.instances.ssh_tunnel_manager import ProxyRequestError, TunnelState
@@ -288,8 +291,64 @@ async def api_instances_status(request: web.Request) -> web.Response:
 # ── write endpoints ──────────────────────────────────────────────────────
 
 
+async def _chain_refusal(reg, via_instance_id: str) -> dict | None:
+    """Why this gateway will not chain behind *via_instance_id*, or ``None``.
+
+    Server-side, and the only authority on it: the frontend shows this reason but
+    never decides it, because the request can come from inside an embedded pane
+    whose code the hub does not control.
+
+    Three refusals, each naming what the user has to change:
+
+    * the named crew is not configured here — nothing to ride;
+    * riding it would make the chain deeper than :data:`MAX_VIA_HOPS`. This is
+      the depth cap, and it is checked BEFORE any tunnel is opened;
+    * the named crew is reached over SSM, whose forwarder takes no second local
+      forward from this gateway.
+
+    The hop PORT is left to the registry's own validator: it is a shape check on
+    one field, and a copy here would be a second place to widen.
+    """
+    instances = await asyncio.to_thread(reg.list)
+    parent = next((i for i in instances if i.id == via_instance_id), None)
+    if parent is None:
+        return {
+            "error": f"no crew with id {via_instance_id!r} to reach the new crew through",
+            "code": "chain_parent_unknown",
+        }
+    # Hops counted from THIS gateway: one to reach the parent, one more for every
+    # crew the parent itself rides through, and one for the new record. So a crew
+    # chained behind a top-level crew is 2 — the cap — and one chained behind THAT
+    # is 3, which is refused.
+    hops = 2 + len(ancestor_ids(instances, parent.id))
+    if hops > MAX_VIA_HOPS:
+        return {
+            "error": (
+                f"that would put {hops} machines between this dashboard and the crew, and "
+                f"{MAX_VIA_HOPS} is the limit. Connect this crew from a dashboard closer to it."
+            ),
+            "code": "chain_too_deep",
+        }
+    parent_method = (parent.connection_method or "ssh").strip().lower()
+    if parent_method != "ssh":
+        return {
+            "error": (
+                f"crew {parent.name} is reached over {parent_method}, and a further crew can "
+                f"only be chained through an ssh hop"
+            ),
+            "code": "chain_parent_not_ssh",
+        }
+    return None
+
+
 async def api_instances_add(request: web.Request) -> web.Response:
-    """POST /api/instances — add a configured instance."""
+    """POST /api/instances — add a configured instance.
+
+    ``via_instance_id`` + ``via_remote_port`` add a CHAINED crew: one this gateway
+    reaches by riding a hop an already-configured crew holds. The depth cap and
+    the parent's own suitability are decided here, before anything is written or
+    dialled — see :func:`_chain_refusal`.
+    """
     denied = _guard(request, "add")
     if denied is not None:
         return denied
@@ -303,6 +362,12 @@ async def api_instances_add(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "body must be an object", "code": "invalid_body"}, status=400
         )
+    via_instance_id = str(body.get("via_instance_id", ""))
+    if via_instance_id:
+        refusal = await _chain_refusal(reg, via_instance_id)
+        if refusal is not None:
+            _audit("add", "denied", error=refusal["code"])
+            return web.json_response(refusal, status=400)
     try:
         inst = await asyncio.to_thread(
             reg.add,
@@ -316,6 +381,8 @@ async def api_instances_add(request: web.Request) -> web.Response:
             ssm_run_as=str(body.get("ssm_run_as", "")),
             aws_profile=str(body.get("aws_profile", "")),
             aws_region=str(body.get("aws_region", "")),
+            via_instance_id=via_instance_id,
+            via_remote_port=int(body.get("via_remote_port", 0)),
             instance_id=body.get("id"),
         )
     except DuplicateInstanceError as e:
@@ -350,6 +417,11 @@ _PATCH_FIELD_TYPES: dict[str, type] = {
     "aws_profile": str,
     "aws_region": str,
     "remote_port": int,
+    # Re-points an existing chained crew at its parent's NEW loopback port after
+    # the parent reconnects. `via_instance_id` is deliberately NOT editable: a
+    # crew's parent is chosen when it is added, and letting a PATCH re-parent one
+    # would move a crew onto a hop whose depth was never checked.
+    "via_remote_port": int,
 }
 
 
@@ -410,6 +482,10 @@ async def api_instances_update(request: web.Request) -> web.Response:
         "aws_profile",
         "aws_region",
         "remote_bin",
+        # The far end of a chained forward. A live tunnel holding the parent's
+        # OLD port forwards to a port nothing listens on any more, which is the
+        # same wrongness as an edited host.
+        "via_remote_port",
     }
     current = await asyncio.to_thread(reg.get, instance_id)
     if current is None:
@@ -566,6 +642,13 @@ async def api_instances_remove(request: web.Request) -> web.Response:
     that window: once the record is gone, ``connect`` refuses the unknown id,
     so a final teardown after the successful remove cannot itself be raced —
     any tunnel it finds is the leftover of a reconnect that slipped in.
+
+    Crews CHAINED behind this one go with it. Their only route is this crew's
+    hop, so a record left behind would describe a forward that can never be
+    opened again — it names a port on a machine this gateway has no way to
+    reach. The disconnect already closes their forwards; this removes the rows
+    too, deepest-last so a parent is never deleted while a child still points
+    at it. The count is reported so the client can say what went.
     """
     denied = _guard(request, "remove")
     if denied is not None:
@@ -574,16 +657,27 @@ async def api_instances_remove(request: web.Request) -> web.Response:
     reg = _registry(state)
     instance_id = request.match_info["id"]
     mgr = getattr(state, "instances_manager", None)
+    # Read the chain BEFORE the disconnect: the teardown does not touch registry
+    # rows, but reading first keeps the list from depending on that.
+    chained = descendant_ids(await asyncio.to_thread(reg.list), instance_id)
     if mgr is not None:
         await mgr.disconnect(instance_id)  # tear down any live tunnel first
     existed = await asyncio.to_thread(reg.remove, instance_id)
     if not existed:
         _audit("remove", "denied", request_id=instance_id, error="not found")
         return web.json_response({"error": "not found"}, status=404)
+    # Deepest first, so no row is ever orphaned mid-sweep: `descendant_ids`
+    # returns parents before their own children, so reversing removes leaves
+    # before the branches they hang off.
+    removed_chained: list[str] = []
+    for child_id in reversed(chained):
+        if await asyncio.to_thread(reg.remove, child_id):
+            removed_chained.append(child_id)
+            _audit("remove", "success", request_id=child_id)
     if mgr is not None:
         await mgr.disconnect(instance_id)  # sweep any reconnect that raced the removal
     _audit("remove", "success", request_id=instance_id)
-    return web.json_response({"removed": instance_id})
+    return web.json_response({"removed": instance_id, "removed_chained": removed_chained})
 
 
 def _connect_failure_code(body: dict, fallback: str) -> str:
@@ -751,6 +845,64 @@ async def api_instances_refresh_token(request: web.Request) -> web.Response:
     body = st.to_dict() if st is not None else {"instance_id": instance_id, "state": "connected"}
     body["token"] = token  # delivered to owner only
     return web.json_response(body)
+
+
+async def api_instances_embed_token(request: web.Request) -> web.Response:
+    """POST /api/instances/{id}/embed-token — mint this crew's token for a HUB.
+
+    Called by a gateway that reaches ``{id}`` by riding OUR hop to it, and that
+    therefore has no key of its own for that machine. The caller names the port it
+    serves its own dashboard on; we mint a fresh token over the transport we
+    already hold, carrying that port as the token's embed-parent claim, so the
+    crew's own CSP admits the caller's page as its pane's frame ancestor.
+
+    Distinct from ``refresh-token``, which mints for OURSELVES and REPLACES the
+    stored credential. Nothing is stored here: this token belongs to the caller's
+    pane, and writing it over ours would break our own pane for the same crew.
+
+    Refuses a crew we ourselves reach through a further hop. That is the depth cap
+    seen from this end and it is the only place it can be seen: the caller counts
+    hops in its own registry and cannot know that ours adds another one.
+    """
+    denied = _guard(request, "embed_token")
+    if denied is not None:
+        return denied
+    state: DashboardState = request.app["state"]
+    instance_id = request.match_info["id"]
+    mgr = getattr(state, "instances_manager", None)
+    if mgr is None:
+        _audit("embed_token", "denied", request_id=instance_id, error="manager unavailable")
+        return web.json_response(
+            {"error": "instances manager not running", "code": "instances_manager_unavailable"},
+            status=503,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body", "code": "invalid_json"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "body must be an object", "code": "invalid_body"}, status=400
+        )
+    port = body.get("embed_parent_port")
+    # bool is excluded explicitly: `isinstance(True, int)` is True, so True would
+    # otherwise be accepted as port 1 and mint a token no page can use.
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        _audit("embed_token", "denied", request_id=instance_id, error="bad embed_parent_port")
+        return web.json_response(
+            {
+                "error": "embed_parent_port must be a number in [1, 65535]",
+                "code": "invalid_field",
+            },
+            status=400,
+        )
+    ok, payload = await mgr.mint_embed_token(instance_id, port)
+    if not ok:
+        status = int(payload.pop("status", 502))
+        _audit("embed_token", "failure", request_id=instance_id, error=str(payload.get("code")))
+        return web.json_response(payload, status=status)
+    _audit("embed_token", "success", request_id=instance_id)
+    return web.json_response(payload)  # token delivered to the authenticated hub only
 
 
 async def api_instances_disconnect(request: web.Request) -> web.Response:
