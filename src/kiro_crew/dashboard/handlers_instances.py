@@ -645,10 +645,19 @@ async def api_instances_remove(request: web.Request) -> web.Response:
 
     Crews CHAINED behind this one go with it. Their only route is this crew's
     hop, so a record left behind would describe a forward that can never be
-    opened again — it names a port on a machine this gateway has no way to
+    opened again -- it names a port on a machine this gateway has no way to
     reach. The disconnect already closes their forwards; this removes the rows
-    too, deepest-last so a parent is never deleted while a child still points
-    at it. The count is reported so the client can say what went.
+    too, LEAVES FIRST and this crew last, so an interrupted sweep can only ever
+    leave a parent with fewer children -- a valid, connectable state -- never a
+    row naming a parent that is already gone.
+
+    It also refuses to delete a record whose forward is still running. The
+    cascade's teardown is best-effort on purpose (a shutdown must not abort on
+    one stuck child), and ``_teardown_locked`` drops a tunnel from its table ONLY
+    when the stop succeeded, so a status still answering afterwards means the
+    process is alive. Deleting that row would leave an untracked forward holding
+    a port with no record to find it by, so the whole subtree is kept and the
+    caller is told which crews are still up.
     """
     denied = _guard(request, "remove")
     if denied is not None:
@@ -662,18 +671,37 @@ async def api_instances_remove(request: web.Request) -> web.Response:
     chained = descendant_ids(await asyncio.to_thread(reg.list), instance_id)
     if mgr is not None:
         await mgr.disconnect(instance_id)  # tear down any live tunnel first
-    existed = await asyncio.to_thread(reg.remove, instance_id)
-    if not existed:
-        _audit("remove", "denied", request_id=instance_id, error="not found")
-        return web.json_response({"error": "not found"}, status=404)
-    # Deepest first, so no row is ever orphaned mid-sweep: `descendant_ids`
-    # returns parents before their own children, so reversing removes leaves
-    # before the branches they hang off.
+
+    # Every crew whose forward survived its teardown. Checked for the WHOLE
+    # subtree before a single row goes, so a refusal removes nothing at all.
+    still_running = [
+        candidate
+        for candidate in [*chained, instance_id]
+        if mgr is not None and mgr.status(candidate) is not None
+    ]
+    if still_running:
+        _audit("remove", "denied", request_id=instance_id, error="forward still running")
+        return web.json_response(
+            {
+                "error": (
+                    "could not stop the forward for "
+                    f"{', '.join(repr(c) for c in still_running)}, so nothing was removed"
+                ),
+                "code": "remove_forward_live",
+                "still_running": still_running,
+            },
+            status=409,
+        )
+
     removed_chained: list[str] = []
     for child_id in reversed(chained):
         if await asyncio.to_thread(reg.remove, child_id):
             removed_chained.append(child_id)
             _audit("remove", "success", request_id=child_id)
+    existed = await asyncio.to_thread(reg.remove, instance_id)
+    if not existed:
+        _audit("remove", "denied", request_id=instance_id, error="not found")
+        return web.json_response({"error": "not found"}, status=404)
     if mgr is not None:
         await mgr.disconnect(instance_id)  # sweep any reconnect that raced the removal
     _audit("remove", "success", request_id=instance_id)

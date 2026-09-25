@@ -657,6 +657,26 @@ class TestCycleGuard:
 # ── the cascade ──────────────────────────────────────────────────────────
 
 
+class _FakeMgr:
+    """A manager whose forwards stop cleanly, except the ids named in *live*.
+
+    `_teardown_locked` drops a tunnel from its table only when the stop
+    succeeded, so a status still answering after a disconnect is exactly how a
+    forward that refused to die presents itself.
+    """
+
+    def __init__(self, live=()):
+        self._live = set(live)
+        self.disconnected: list[str] = []
+
+    async def disconnect(self, instance_id, **_kw):
+        self.disconnected.append(instance_id)
+        return True
+
+    def status(self, instance_id):
+        return object() if instance_id in self._live else None
+
+
 class TestChainCascade:
     def test_disconnecting_a_parent_closes_its_childrens_forwards(self, tmp_path, monkeypatch):
         """A child's forward targets a port on a machine this gateway can no
@@ -714,6 +734,58 @@ class TestChainCascade:
         assert body["removed"] == "b"
         assert sorted(body["removed_chained"]) == ["c", "d"]
         assert [i.id for i in reg.list()] == ["other"]
+
+    def test_a_forward_that_would_not_stop_keeps_the_whole_subtree(self, tmp_path, monkeypatch):
+        """Deleting the row of a live forward leaves an untracked process holding a
+        port with no record to find it by, so the refusal removes nothing at all."""
+        from kiro_crew.dashboard import handlers_instances as handlers
+
+        _enable(tmp_path, monkeypatch)
+        reg = InstancesRegistry(path=tmp_path / "instances.json")
+        reg.add(name="B", ssh_host="b-host", instance_id="b")
+        reg.add(
+            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+        )
+
+        resp = asyncio.run(
+            handlers.api_instances_remove(
+                _FakeReq(_State(reg, _FakeMgr(live={"c"})), match={"id": "b"})
+            )
+        )
+        assert resp.status == 409
+        body = _resp_body(resp)
+        assert body["code"] == "remove_forward_live"
+        assert body["still_running"] == ["c"]
+        assert sorted(i.id for i in reg.list()) == ["b", "c"], "deleted a row whose forward is alive"
+
+    def test_the_rows_go_leaves_first_so_no_row_outlives_its_parent(self, tmp_path, monkeypatch):
+        """An interrupted sweep may leave a parent with fewer children, which still
+        connects; a row whose parent is already gone can never be opened again."""
+        from kiro_crew.dashboard import handlers_instances as handlers
+
+        _enable(tmp_path, monkeypatch)
+        reg = InstancesRegistry(path=tmp_path / "instances.json")
+        reg.add(name="B", ssh_host="b-host", instance_id="b")
+        reg.add(
+            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+        )
+        reg.add(
+            name="D", ssh_host="d-host", instance_id="d", via_instance_id="c", via_remote_port=2
+        )
+
+        order: list[str] = []
+        real_remove = reg.remove
+
+        def recording_remove(target):
+            order.append(target)
+            return real_remove(target)
+
+        monkeypatch.setattr(reg, "remove", recording_remove)
+        resp = asyncio.run(
+            handlers.api_instances_remove(_FakeReq(_State(reg, _FakeMgr()), match={"id": "b"}))
+        )
+        assert resp.status == 200
+        assert order == ["d", "c", "b"], f"removed in {order}, so a row can outlive its parent"
 
 
 # ── the depth cap, at the add boundary ───────────────────────────────────
