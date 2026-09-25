@@ -380,10 +380,10 @@ class TestAnUnresolvableGateFailsClosed:
         module_name = f"{PACKAGE}.{facade._EXPORTS[name]}"
         real = importlib.import_module
 
-        def _refuse(target: str, *args: object, **kwargs: object) -> ModuleType:
+        def _refuse(target: str, package: str | None = None) -> ModuleType:
             if target == module_name:
                 raise ImportError(f"refused for the test: {target}")
-            return real(target, *args, **kwargs)
+            return real(target, package)
 
         monkeypatch.setattr(importlib, "import_module", _refuse)
         with pytest.raises(ImportError):
@@ -402,10 +402,10 @@ class TestAnUnresolvableGateFailsClosed:
         module_name = f"{PACKAGE}.{facade._EXPORTS[name]}"
         real = importlib.import_module
 
-        def _refuse(target: str, *args: object, **kwargs: object) -> ModuleType:
+        def _refuse(target: str, package: str | None = None) -> ModuleType:
             if target == module_name:
                 raise ImportError(f"refused for the test: {target}")
-            return real(target, *args, **kwargs)
+            return real(target, package)
 
         monkeypatch.setattr(importlib, "import_module", _refuse)
         with pytest.raises(ImportError):
