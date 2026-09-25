@@ -60,6 +60,14 @@ _MAX_ID_BYTES = 4096
 #: meaningful within one run; a restart gets a new one.
 _IN_MEMORY_ID = uuid.uuid4().hex
 
+# Resolved ids, keyed by the id FILE's path so two data homes stay two gateways.
+# The id is immutable once written, and `/api/health` is the most frequently
+# polled endpoint there is, so re-reading the file per request would put a
+# filesystem round-trip on the event loop for a value that cannot change. Only a
+# valid persisted id is cached: an empty `create=False` miss and the process-local
+# fallback are both conditions a later call can legitimately resolve differently.
+_CACHED_IDS: dict[str, str] = {}
+
 
 def _read_id(path: Path) -> str:
     """Read the id file safely, or return ``""`` for anything unusable.
@@ -97,8 +105,12 @@ def gateway_id(*, create: bool = True) -> str:
     """
     try:
         path = config_dir() / GATEWAY_ID_FILE
+        cached = _CACHED_IDS.get(str(path))
+        if cached:
+            return cached
         existing = _read_id(path) if path.exists() else ""
         if _ID_RE.match(existing):
+            _CACHED_IDS[str(path)] = existing
             return existing
         if existing or path.exists():
             # Corrupt, truncated or not a regular file: replace it rather than
@@ -120,12 +132,16 @@ def gateway_id(*, create: bool = True) -> str:
             with contextlib.suppress(OSError):
                 platform_compat.restrict_to_owner(tmp_path)
             os.link(tmp_path, str(path))
+            _CACHED_IDS[str(path)] = fresh
             return fresh
         except FileExistsError:
             # Lost the race with another process: adopt the winner's id, which
             # is the whole point of linking rather than renaming.
             adopted = _read_id(path)
-            return adopted if _ID_RE.match(adopted) else _IN_MEMORY_ID
+            if _ID_RE.match(adopted):
+                _CACHED_IDS[str(path)] = adopted
+                return adopted
+            return _IN_MEMORY_ID
         finally:
             if tmp_fd >= 0:
                 with contextlib.suppress(OSError):

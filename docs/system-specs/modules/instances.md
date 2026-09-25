@@ -2409,10 +2409,13 @@ torn down and the connect refused. Ids are compared, never `ssh_host` strings --
 machine answers to many spellings, so a string comparison would refuse unrelated
 crews and still admit real loops.
 
-Two deliberate limits. A crew that reports no id (a build older than the field) is
-allowed: the loop it cannot rule out is a nested pane, not an escape from a boundary,
-and the depth cap already bounds the arrangement -- refusing would make chaining
-unusable against every crew that has not been updated. And a TOP-LEVEL crew is not
+Two deliberate limits. A crew that reports no id is allowed: the loop it cannot rule
+out is a nested pane, not an escape from a boundary, and the depth cap already bounds
+the arrangement -- refusing would make chaining unusable against every crew that has
+not been updated. Note that "no id" covers two cases, not one: a build older than the
+field, and a caller the direct-local gate above fences off. The hub's own read rides
+the loopback end of a forward it just opened, which that gate treats as direct-local,
+so the second case does not arise on this path. And a TOP-LEVEL crew is not
 cycle-checked at all: one pointing back at this gateway is what the product already
 allows, and refusing it here would break a working setup over an arrangement chaining
 does not introduce.

@@ -277,14 +277,17 @@ DEFAULT_MODELS_CAPABILITY_PROXY_TIMEOUT_SECS: float = 20.0
 CAPABILITY_REPLY_MAX_BYTES: int = 2 * 1024 * 1024
 
 # Timeout (secs) for asking a parent crew to mint a token for a crew chained
-# behind it. The parent answers by running `kirocrew token` over ITS OWN ssh hop,
-# so the budget has to cover a whole remote mint (DEFAULT_MINT_TIMEOUT_SECS) plus
-# the round trip through the hub's forward to the parent -- which is why it is not
+# behind it. The parent answers by running `kirocrew token` over ITS OWN hop to
+# that crew, so the budget has to cover the parent's whole remote mint plus the
+# round trip through the hub's forward to the parent -- which is why it is not
 # the 8s capability budget, whose reads answer from state the peer already holds.
-# Slightly over twice the mint budget leaves the parent's own timeout the one that
-# fires first, so a slow crew is reported as a mint failure with the parent's
-# reason rather than as an unreachable parent.
-DEFAULT_CHAINED_MINT_TIMEOUT_SECS: float = 75.0
+# It sits ABOVE the parent's WIDEST mint budget, DEFAULT_SSM_MINT_TIMEOUT_SECS,
+# which is what the parent arms when it reaches that crew over SSM. That ordering
+# is the point: the parent's own timeout fires first, so a slow crew is reported
+# as a mint failure carrying the parent's reason rather than as an unreachable
+# parent. The budget spans the WHOLE call including its single retry, not each
+# attempt, so the worst case here is what a caller holding a lock waits for.
+DEFAULT_CHAINED_MINT_TIMEOUT_SECS: float = 105.0
 
 # Byte ceiling for one chained-mint reply, enforced BEFORE JSON decoding. The
 # honest payload is one token and one port -- a few hundred bytes -- so 64 KiB is

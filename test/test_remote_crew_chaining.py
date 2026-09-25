@@ -484,6 +484,49 @@ class TestChainedToken:
 # ── the cycle guard ──────────────────────────────────────────────────────
 
 
+    def test_a_parent_remint_completes_with_the_lock_already_held(self, tmp_path, monkeypatch):
+        """The chained mint runs inside `connect`'s lock hold, so the re-mint it
+        reaches for on a rejected parent credential has to work THERE. Bounded by
+        `wait_for` so a re-entrant acquire fails the test instead of hanging it."""
+        reg, mgr = _mgr(tmp_path, monkeypatch)
+        reg.add(name="B", ssh_host="b-host", instance_id="b")
+
+        async def scenario():
+            await mgr.connect("b")
+            async with mgr._lock:
+                return await asyncio.wait_for(mgr._remint_parent_under_lock("b"), timeout=5)
+
+        assert asyncio.run(scenario()) is True
+        assert mgr.get_token("b"), "re-minted nothing for the parent"
+
+    def test_the_rejected_credential_path_never_re_enters_the_manager_lock(self):
+        """`asyncio.Lock` is not reentrant and the holder here is the same task, so
+        a 401 reaching the lock-taking public refresh would hang the connect while
+        it still holds the lock, wedging every later connect and disconnect."""
+        import ast
+        import inspect
+        import textwrap
+
+        from kiro_crew.instances.ssh_tunnel_manager import SshTunnelManager
+
+        def calls_in(fn):
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            return {ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+
+        relay_calls = calls_in(SshTunnelManager._mint_through_parent)
+        assert "self.refresh_token" not in relay_calls, "re-enters the lock via the public refresh"
+        assert "self._remint_parent_under_lock" in relay_calls
+
+        helper = textwrap.dedent(inspect.getsource(SshTunnelManager._remint_parent_under_lock))
+        acquired = [
+            ast.unparse(item.context_expr)
+            for node in ast.walk(ast.parse(helper))
+            if isinstance(node, ast.AsyncWith)
+            for item in node.items
+        ]
+        assert "self._lock" not in acquired, "the caller already holds it; taking it again deadlocks"
+
+
 class TestCycleGuard:
     def _chained(self, tmp_path, monkeypatch):
         reg, mgr = _mgr(tmp_path, monkeypatch)
@@ -882,13 +925,40 @@ class TestGatewayIdentity:
         from kiro_crew.config import loader
 
         loader._invalidate_config_cache()
+        from kiro_crew import gateway_identity
         from kiro_crew.gateway_identity import GATEWAY_ID_FILE, gateway_id
 
         first = gateway_id()
         assert len(first) == 32
+        # Drop the memo so the second call has to answer from the FILE. That is
+        # what "persisted" claims, and a memo hit would assert nothing about disk.
+        gateway_identity._CACHED_IDS.clear()
         assert gateway_id() == first, "minted a second id for one gateway"
         stored = (loader.config_dir() / GATEWAY_ID_FILE).read_text().strip()
         assert stored == first
+
+    def test_a_repeat_read_does_not_touch_the_disk(self, tmp_path, monkeypatch):
+        """`/api/health` is the most polled endpoint there is and the id cannot
+        change, so only the first resolve may pay for the file."""
+        monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+        from kiro_crew.config import loader
+
+        loader._invalidate_config_cache()
+        from kiro_crew import gateway_identity
+
+        gateway_identity._CACHED_IDS.clear()
+        first = gateway_identity.gateway_id()
+        assert len(first) == 32
+
+        reads: list[str] = []
+
+        def counting_read(path):
+            reads.append(str(path))
+            return ""
+
+        monkeypatch.setattr(gateway_identity, "_read_id", counting_read)
+        assert gateway_identity.gateway_id() == first
+        assert reads == [], "re-read the id file for a value that cannot change"
 
     def test_a_corrupt_file_is_replaced(self, tmp_path, monkeypatch):
         monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))

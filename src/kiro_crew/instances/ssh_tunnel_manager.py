@@ -2027,6 +2027,49 @@ class SshTunnelManager:
                 )
         return ""
 
+    async def _remint_parent_under_lock(self, parent_id: str) -> bool:
+        """Re-mint *parent_id*'s own credential with the manager lock ALREADY HELD.
+
+        :meth:`_mint_through_parent` runs inside :meth:`connect`'s
+        ``async with self._lock``, so it cannot reach for :meth:`refresh_token`:
+        that stores under the same lock, ``asyncio.Lock`` is not reentrant, and the
+        acquire would never complete while the caller's own frame holds it -- a
+        connect that hangs forever holding the lock, wedging every later connect,
+        disconnect and self-heal.
+
+        The caller's held lock is exactly what makes storing safe without taking
+        it, so this stores directly. It is the only correct caller: acquiring the
+        lock is the caller's job, not this method's.
+
+        Returns ``False`` for every "cannot", leaving the 401 to be raised as a
+        mint failure: a parent mid-reconfiguration, one no longer connected,
+        coordinates that do not validate, and a mint the parent's own remote
+        refused.
+        """
+        if parent_id in self._reconfiguring:
+            return False
+        inst = await asyncio.to_thread(self._registry.get, parent_id)
+        if inst is None or parent_id not in self._tunnels:
+            return False
+        try:
+            params = self._resolve_transport(inst, await self._with_parent(inst))
+        except (SshValidationError, SsmValidationError) as e:
+            logger.warning("Parent credential re-mint aborted for %s: %s", parent_id, e)
+            return False
+        try:
+            token = await self._mint_for(inst, params)
+        except TokenMintError as e:
+            logger.warning("Parent credential re-mint failed for %s: %s", parent_id, e)
+            return False
+        # The lock is held across the mint above, so no other task can have torn
+        # the tunnel down meanwhile; the re-check costs nothing and keeps this
+        # correct if a caller ever awaits between acquiring and arriving here.
+        if parent_id not in self._tunnels:
+            return False
+        self._store_token(parent_id, token, inst.ttl)
+        logger.info("Re-minted the credential for parent %s", parent_id)  # no token in logs
+        return True
+
     async def _mint_through_parent(self, inst: Instance, params: _TransportParams) -> str:
         """Ask the parent crew to mint *inst*'s token with OUR embed parent port.
 
@@ -2046,14 +2089,19 @@ class SshTunnelManager:
           it keeps working.
 
         A 401/403 gets exactly one transparent re-mint of the PARENT's credential
-        and one retry, matching every other peer call here. Raises
+        and one retry, matching every other peer call here. That re-mint goes
+        through :meth:`_remint_parent_under_lock`, because this runs with the
+        manager lock held and the public refresh takes that same lock. Raises
         :class:`TokenMintError` on anything else, so the caller's existing
         mint-failure handling applies unchanged.
         """
         parent_id = params.via_instance_id
         path = f"/api/instances/{inst.id}/embed-token"
         body = json.dumps({"embed_parent_port": int(self._parent_port)}).encode("utf-8")
-        timeout = aiohttp.ClientTimeout(total=_CHAINED_MINT_TIMEOUT)
+        # ONE budget for the whole call, retry included. This runs under the
+        # manager lock, so the ceiling a concurrent connect or disconnect waits on
+        # is the ceiling of the CALL; a full budget per attempt would double it.
+        deadline = time.monotonic() + _CHAINED_MINT_TIMEOUT
         reminted = False
         for _attempt in range(2):
             try:
@@ -2065,6 +2113,10 @@ class SshTunnelManager:
                     f"{inst.id!r} ({e.message})"
                 ) from None
             headers["Content-Type"] = "application/json"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TokenMintError(f"crew {parent_id!r} did not answer the mint in time")
+            timeout = aiohttp.ClientTimeout(total=remaining)
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(
@@ -2078,7 +2130,7 @@ class SshTunnelManager:
                         allow_redirects=False,
                     ) as resp:
                         if resp.status in (401, 403):
-                            if not reminted and await self.refresh_token(parent_id):
+                            if not reminted and await self._remint_parent_under_lock(parent_id):
                                 reminted = True
                                 continue
                             raise TokenMintError(f"crew {parent_id!r} rejected our credential")
