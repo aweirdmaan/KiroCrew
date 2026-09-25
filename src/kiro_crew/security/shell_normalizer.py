@@ -2577,6 +2577,26 @@ def _cut_at_operator(token: str) -> str:
     return "".join(out)
 
 
+# A WHOLE word that may expand to nothing; ``$(``/backtick allow a split body's head.
+_SUBSTITUTION_SHAPED_RE = re.compile(r"\$\{[^{}]*\}|\$\w+|\$[@*#?!$-]|\$\([^)]*\)?|`[^`]*`?|[()]+")
+
+
+def _expansion_span_end(tokens: "list[str]", j: int) -> "int | None":
+    """Index just past the whole-expansion word at ``tokens[j]`` (a multiword
+    ``$( ... )`` or backtick body included), or None when it is not one."""
+    if not _SUBSTITUTION_SHAPED_RE.fullmatch(tokens[j]):
+        return None
+    depth, ticks = tokens[j].count("(") - tokens[j].count(")"), tokens[j].count("`") % 2
+    k = j + 1
+    while (depth > 0 or ticks) and k < len(tokens):
+        depth += tokens[k].count("(") - tokens[k].count(")")
+        ticks ^= tokens[k].count("`") % 2
+        k += 1
+    if k > j + 1 and not tokens[k - 1].endswith((")", "`")):
+        return None  # literal text glued after the closer: the word survives
+    return k
+
+
 class _ShellWalk(NamedTuple):
     """What one pass of the shell's quote/escape state machine observed."""
 

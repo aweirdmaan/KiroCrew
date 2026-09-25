@@ -98,6 +98,7 @@ from .shell_normalizer import (
     _decode_shell_quoted_literals,
     _dequote_token,
     _ends_argv,
+    _expansion_span_end,
     _glob_could_expand_to,
     _is_mint_verb,
     _is_self_program,
@@ -3241,6 +3242,8 @@ def _is_git_push_via_normalizer(text_lower: str) -> bool:
                     j += 2  # skip flag + its argument
                 elif tokens[j].startswith("-"):
                     j += 1  # skip simple flag
+                elif (span_end := _expansion_span_end(tokens, j)) is not None:
+                    j = span_end  # may expand to nothing: fail closed, keep seeking
                 else:
                     break
             if j < len(tokens) and _resolves_to(tokens[j], "push"):
