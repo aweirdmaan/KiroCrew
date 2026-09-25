@@ -284,6 +284,60 @@ class TestLLMPoolWorkerReplacement:
         assert result == "recovered"
 
 
+class TestAcpWorkerTimeoutRetiresClient:
+    """A timed-out turn must not leave its kiro-cli child in the pool."""
+
+    @staticmethod
+    def _busy_client(exc: Exception) -> MagicMock:
+        client = MagicMock()
+        client.is_ready = True
+        client.is_process_alive = lambda: True
+        client.send_message = AsyncMock(side_effect=exc)
+        client.shutdown = AsyncMock()
+        return client
+
+    @pytest.mark.asyncio
+    async def test_timeout_shuts_down_so_next_send_gets_fresh_worker(self):
+        from kiro_crew.acp.client import AcpTimeoutError
+
+        stuck = self._busy_client(AcpTimeoutError())
+        worker = AcpWorker()
+        worker._client = stuck
+        pool = LLMPool(pool_size=1)
+        pool._started = True
+        pool._provider_type = "test"
+        pool._workers.append(worker)
+        pool._available.put_nowait(0)
+
+        async def _mock_create_worker():
+            w = FakeWorker(responses=["fresh"])
+            w._started = True
+            return w
+
+        pool._create_worker = _mock_create_worker  # type: ignore[assignment]
+
+        with pytest.raises(AcpTimeoutError):
+            await pool.send("first", timeout=1.0)
+        stuck.shutdown.assert_awaited_once()
+        assert worker.is_alive() is False
+
+        assert await pool.send("second") == "fresh"
+        assert stuck.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_other_acp_error_keeps_client(self):
+        from kiro_crew.acp.client import AcpError
+
+        client = self._busy_client(AcpError("boom"))
+        worker = AcpWorker()
+        worker._client = client
+
+        with pytest.raises(AcpError):
+            await worker.send_message("hello", timeout=1.0)
+        client.shutdown.assert_not_awaited()
+        assert worker._client is client
+
+
 # ---------------------------------------------------------------------------
 # Tests: send_batch error handling
 # ---------------------------------------------------------------------------

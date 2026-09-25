@@ -34,9 +34,13 @@ from kiro_crew.sandbox import (
 )
 
 try:
-    from kiro_crew.acp.client import AcpClient
-except ImportError:
+    from kiro_crew.acp.client import AcpClient, AcpTimeoutError
+except ImportError:  # pragma: no cover - standalone / test fallback
     AcpClient = None  # type: ignore[assignment,misc]
+
+    class AcpTimeoutError(Exception):  # type: ignore[no-redef]
+        """Stand-in so ``except`` clauses still resolve without the client."""
+
 
 # Sweep-protection shield for AcpClient-backed workers. These are direct,
 # long-lived AcpClient sessions (not SessionMap sessions / warm-pool providers),
@@ -404,7 +408,13 @@ class AcpWorker(Worker):
         if self._client is None or not self._client.is_ready:
             await self.start()
         assert self._client is not None
-        return await self._client.send_message(prompt, timeout=timeout)
+        try:
+            return await self._client.send_message(prompt, timeout=timeout)
+        except AcpTimeoutError:
+            # The child still owns the timed-out turn, so a reused client would
+            # answer "Prompt already in progress". Drop it; acquire respawns.
+            await self.shutdown()
+            raise
 
     async def shutdown(self) -> None:
         if self._protected_pid is not None:
