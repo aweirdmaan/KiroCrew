@@ -1532,9 +1532,13 @@ export default function KiroPrerequisiteGate({ children }: { children: ReactNode
                   </span>
                   {i18nT('components.kiroPrerequisiteGate.get_kiro_cli')}
                 </h2>
+                {/* The card's first line is the state, in both states: "isn't
+                    installed yet" or "is installed, finish signing in". The
+                    footer used to carry the installed line, below the other
+                    agents section, where it read as an afterthought. */}
                 <p className="mt-2 text-sm leading-relaxed text-muted">
                   {status.installed
-                    ? i18nT('components.kiroPrerequisiteGate.sign_in_with_kiro_cli_on_the_gateway_host')
+                    ? i18nT('components.kiroPrerequisiteGate.kiro_cli_is_installed_finish_signing_in_to_conti')
                     : i18nT('components.kiroPrerequisiteGate.kiro_cli_is_not_installed_yet')}
                 </p>
               </div>
@@ -1578,6 +1582,9 @@ export default function KiroPrerequisiteGate({ children }: { children: ReactNode
                 describes the choice and lets the user make it. */}
             {status.installed && !status.authenticated && (
               <div className="mt-4 space-y-4">
+                <p className="text-sm leading-relaxed text-text">
+                  {i18nT('components.kiroPrerequisiteGate.sign_in_with_kiro_cli_on_the_gateway_host')}
+                </p>
                 <div>
                   <p className="text-[13px] font-medium text-text">
                     {i18nT('components.kiroPrerequisiteGate.sign_in_personal_label')}
@@ -1612,9 +1619,12 @@ export default function KiroPrerequisiteGate({ children }: { children: ReactNode
           />
 
           <div className="flex items-center justify-between gap-4 border-t border-border pt-5">
+            {/* Installed: the state now leads the card, so the footer stays
+                empty rather than repeating it. The element is kept so Check
+                again stays right-aligned. */}
             <p className="text-[13px] text-muted" aria-live="polite">
               {status.installed
-                ? i18nT('components.kiroPrerequisiteGate.kiro_cli_is_installed_finish_signing_in_to_conti')
+                ? null
                 : i18nT('components.kiroPrerequisiteGate.kiro_cli_is_required_on_the_gateway_host', { platform })}
             </p>
             <SendBtn

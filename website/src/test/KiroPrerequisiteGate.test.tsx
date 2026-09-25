@@ -1379,6 +1379,10 @@ describe('KiroPrerequisiteGate agent choice', () => {
     expect(screen.queryByRole('heading', { name: 'Sign in to Kiro' })).not.toBeInTheDocument()
     expect(within(card as HTMLElement).getByText('kiro-cli login')).toBeInTheDocument()
     expect(within(card as HTMLElement).queryByText(/cli\.kiro\.dev\/install/)).not.toBeInTheDocument()
+    // The installed state leads the card, and is said once: not repeated in
+    // the footer below the other-agents section.
+    expect(within(card as HTMLElement).getByText(/Kiro CLI is installed/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Kiro CLI is installed/)).toHaveLength(1)
   })
 
   it('shows the PowerShell installer for a Windows host only', async () => {
