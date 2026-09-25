@@ -81,7 +81,9 @@ from kiro_crew.dashboard.session_transfer import (
     build_transfer_bundle_async,
     bundle_rejection_reason,
 )
+from kiro_crew.dashboard.chat_utils import slot_history_key
 from kiro_crew.dashboard.state import DashboardState
+from kiro_crew.history import transcript_withholds_derivation
 from kiro_crew.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -284,13 +286,14 @@ async def api_chat_slot_export(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "session not found", "code": "export_slot_not_found"}, status=404
         )
-    if slot.memory_mode != "persistent":
+
+    def _refuse_restricted(reason: str) -> web.Response:
         # An incognito or temporary transcript is kept for the user's own History
         # and nothing is produced FROM it -- no lesson, no summary, no snapshot.
         # A bundle written into a file the user then stores somewhere is such a
         # product, so this is a refusal rather than a best-effort export of
         # whatever happens to be resident.
-        _audit("denied", error=f"memory_mode={slot.memory_mode}")
+        _audit("denied", error=reason)
         return web.json_response(
             {
                 "error": "cannot export an incognito or temporary session",
@@ -298,6 +301,20 @@ async def api_chat_slot_export(request: web.Request) -> web.Response:
             },
             status=400,
         )
+
+    if slot.memory_mode != "persistent":
+        return _refuse_restricted(f"memory_mode={slot.memory_mode}")
+    # The bundle is built from the transcript on DISK, so the file's own privacy
+    # contract gates it too, not only the live slot's mode above: another writer
+    # (a second gateway on this data home, a same-key hand-over, a subagent or
+    # cron appending) may have tightened the line while this slot still reads
+    # persistent in memory. Asked before the build and again after it, so a
+    # tightening that lands in between is caught; an unreadable line refuses.
+    history_key = slot_history_key(slot)
+    if state.conversation_log and await asyncio.to_thread(
+        transcript_withholds_derivation, state.conversation_log, history_key
+    ):
+        return _refuse_restricted("memory_mode=restricted on the on-disk line")
 
     try:
         bundle = await build_transfer_bundle_async(
@@ -372,6 +389,13 @@ async def api_chat_slot_export(request: web.Request) -> web.Response:
             {"error": "the session could not be exported", "code": "export_failed"},
             status=500,
         )
+
+    if state.conversation_log and await asyncio.to_thread(
+        transcript_withholds_derivation, state.conversation_log, history_key
+    ):
+        # The line tightened while the bundle was being built: the rows it holds
+        # are now under a restricted contract, so the file does not leave.
+        return _refuse_restricted("memory_mode=restricted on the on-disk line (tightened)")
 
     if not bundle.get("messages"):
         # Refused here rather than handed over, because the importer's floor

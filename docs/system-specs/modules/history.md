@@ -848,18 +848,45 @@ writer:
   unsaved tail with `rows_only=True`, which defers every slot-owned field —
   `memory_mode` included — to the line a same-key replacement published. A
   restricted original draining onto a PERSISTENT replacement's line would
-  therefore put private rows under a line that says persistent, and the line
-  cannot be tightened from the drain (it is the live replacement's own line,
-  over that slot's persistent rows, and a rows-only write owns none of its
-  fields). The save refuses that write (`False`, nothing written) when the
-  retained mode is stricter than the line's, and the drain reports the rows as
-  lost exactly as it reports a failed write — a 500 `history_save_failed` on
-  the close, a log line naming the count. The reverse (a persistent tail onto a
-  restricted line) commits and keeps the line's stricter mode, as
-  stricter-wins requires. The refusal is reachable only when the original
-  committed nothing before the close: a line it had published ratchets the
-  replacement's own save down to the restricted mode, so the drain then lands
-  the tail under it.
+  therefore put private rows under a line that says persistent. The line is a
+  ratchet any writer may tighten, so when the retained mode is stricter than
+  the line's the drain folds it in and TIGHTENS the line — `memory_mode`
+  becomes the stricter value and a carried `memory_store` is dropped, since a
+  restricted line names no store — and the rows land under it; the
+  replacement's title, folder, tags and pin are not the drain's and stay. The
+  LIVE replacement is tightened with it, in process and before the write
+  (`_tighten_replacement_to_restricted_original`): the session summary and the
+  export gate on `slot.memory_mode` and then read the whole transcript from
+  disk, so a persistent replacement would hand the original's rows to a model
+  or a file. Its live carrier / vouched entry is released; the durable
+  `execution_context` record carried on the line is folded to the line's mode
+  by the same save (`_tighten_carried_execution`, also on the full-save carry),
+  and `read_session_execution` folds the line's canonical `memory_mode` into
+  any durable record it returns, so no carrier-first reader or binder answers
+  looser than the line even for a hand-edited header. This is the same file the
+  other race order reaches: a line the original had committed ratchets the
+  replacement's own save down to the restricted mode.
+  Refusing instead would lose the reply the user was watching with no retry
+  path (the slot is popped), which is why the drain tightens rather than
+  refuses. The reverse (a persistent tail onto a restricted line) commits and
+  keeps the line's stricter mode untouched, as stricter-wins requires. The
+  tightening is reachable only when the original committed nothing before the
+  close; the replacement's next full save folds the tightened line back in, so
+  the ratchet holds.
+- **Readers that take rows from disk gate on the disk line too.** The session
+  summary (`chat_summary`) and the export (`session_export`) check the LIVE
+  slot's `memory_mode` and then read the whole transcript from disk, and a live
+  slot can lag its file: another writer (a second gateway on the same data home,
+  a same-key hand-over, a subagent or cron appending) may have tightened the
+  line while the slot still reads persistent in memory. Both therefore also ask
+  `history.transcript_withholds_derivation(log, key)` -- the on-disk line's
+  `memory_mode` through `is_incognito_transcript`, failing CLOSED on an
+  unreadable line, an absent file being no refusal -- BEFORE reading and again
+  AFTER (the summary around its transcript read, the export around its bundle
+  build), so a tightening that lands in between is caught. A refusal is the
+  same outcome as the slot gate's: the summary skips with reason
+  `memory_mode`, the export answers 400 `export_slot_not_persistent` and
+  audits `denied`.
 - **The suggestions builder skips restricted transcripts.**
   `suggestions._build_context` walks `list_sessions()` and pulls each
   session's last user messages into a prompt shipped to the model and cached

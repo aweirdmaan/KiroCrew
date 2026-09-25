@@ -817,11 +817,37 @@ def is_incognito_transcript(memory_mode: object) -> bool:
     return str(memory_mode or "").lower() in INCOGNITO_MEMORY_MODES
 
 
+def transcript_withholds_derivation(log: "ConversationLog", key: str) -> bool:
+    """True when *key*'s ON-DISK line forbids deriving anything from the transcript.
+
+    The metadata line's ``memory_mode`` is the file's privacy contract: every
+    reader that learns from the file gates on it, and any writer -- this process,
+    another gateway on the same data home, a subagent or cron appending to the
+    session -- may only ever tighten it. A reader that reads the ROWS from disk
+    but gates on a LIVE slot's mode (the session summary, the export) can
+    therefore lag the file: the line says restricted, the slot it kept in memory
+    still says persistent, and the private rows go to a model or a file. Such a
+    reader asks this predicate about the file it is about to read, and again
+    about the file it just read, so a tightening that lands between the two is
+    caught as well.
+
+    Fails CLOSED: a line that cannot be read answers ``True``, because a reader
+    that cannot see the contract has no business acting on the rows. An absent
+    file (no line yet) is not a refusal -- there is nothing on disk to protect.
+    """
+    metadata, readable = log.get_metadata_status(key)
+    if not readable:
+        return True
+    return is_incognito_transcript(metadata.get("memory_mode"))
+
+
 # The fields that record where a message came from: the session key it arrived
 # on (``source_thread``, e.g. ``slack:1785861252.833429``) and the platform user
 # who sent it (``source_user``). Written by :meth:`ConversationLog.append`, read
 # by :meth:`ConversationLog.get_source_threads` for cross-session citation and
 # by SEL attribution.
+
+
 PROVENANCE_FIELDS = ("source_thread", "source_user")
 
 
