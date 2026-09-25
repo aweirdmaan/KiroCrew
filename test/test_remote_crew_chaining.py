@@ -484,6 +484,43 @@ class TestChainedToken:
 # ── the cycle guard ──────────────────────────────────────────────────────
 
 
+    def test_a_stored_id_cannot_inject_a_parent_control_plane_path(self, tmp_path, monkeypatch):
+        """`Instance.from_dict` is deliberately tolerant, so a registry file written
+        by hand or by an agent can carry any id string. Unchecked, an id like
+        `victim/disconnect?x=` interpolates into a DIFFERENT authenticated route on
+        the parent and spends our credential for it there."""
+        from kiro_crew.instances.registry import Instance
+        from kiro_crew.instances.ssh_tunnel_manager import TokenMintError
+
+        reg, mgr = _mgr(tmp_path, monkeypatch)
+        reg.add(name="B", ssh_host="b-host", instance_id="b")
+        valid = reg.add(
+            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=53999
+        )
+        params = mgr._resolve_chained_transport(valid, reg.get("b"))
+
+        hostile = Instance.from_dict(
+            {
+                "id": "victim/disconnect?x=",
+                "name": "C",
+                "ssh_host": "c-host",
+                "via_instance_id": "b",
+                "via_remote_port": 53999,
+            }
+        )
+        assert hostile.id == "victim/disconnect?x=", "from_dict rejected it, so the risk is elsewhere"
+
+        dialled: list[str] = []
+
+        def record_target(*_a, **_k):
+            dialled.append("built a request")
+            return "http://127.0.0.1:1/x", "cookie"
+
+        monkeypatch.setattr(mgr, "_peer_target", record_target)
+        with pytest.raises(TokenMintError):
+            asyncio.run(mgr._mint_through_parent(hostile, params))
+        assert dialled == [], "built a parent request for an id outside the grammar"
+
     def test_a_parent_remint_completes_with_the_lock_already_held(self, tmp_path, monkeypatch):
         """The chained mint runs inside `connect`'s lock hold, so the re-mint it
         reaches for on a rejected parent credential has to work THERE. Bounded by

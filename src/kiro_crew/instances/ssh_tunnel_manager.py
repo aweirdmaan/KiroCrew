@@ -55,6 +55,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
+from urllib.parse import quote
 
 import aiohttp
 
@@ -122,6 +123,7 @@ from kiro_crew.instances.diagnostics import (
 )
 from kiro_crew.instances.port_allocator import PortAllocator, _is_addr_free, _is_port_free
 from kiro_crew.instances.registry import (
+    _ID_RE as _INSTANCE_ID_RE,
     _NO_FORWARDER_PID,
     _UNALLOCATED_PORT,
     MAX_VIA_HOPS,
@@ -2096,7 +2098,17 @@ class SshTunnelManager:
         mint-failure handling applies unchanged.
         """
         parent_id = params.via_instance_id
-        path = f"/api/instances/{inst.id}/embed-token"
+        # A STORED id reaching a request path has never been through `validate`:
+        # `Instance.from_dict` is deliberately tolerant, so a registry file written
+        # by hand or by an agent can carry any string here. Unchecked, an id like
+        # `victim/disconnect?x=` would interpolate into a DIFFERENT authenticated
+        # route on the parent and spend our credential for it there. Refuse it,
+        # then still encode as exactly one segment.
+        if not _INSTANCE_ID_RE.match(inst.id):
+            raise TokenMintError(
+                f"crew {inst.id!r} has an id this gateway will not place in a request path"
+            )
+        path = f"/api/instances/{quote(inst.id, safe='')}/embed-token"
         body = json.dumps({"embed_parent_port": int(self._parent_port)}).encode("utf-8")
         # ONE budget for the whole call, retry included. This runs under the
         # manager lock, so the ceiling a concurrent connect or disconnect waits on
