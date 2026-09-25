@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import math
@@ -1205,6 +1206,61 @@ def _locked_file(path: Path, mode: str) -> Iterator[Any]:
     with open(path, mode, encoding="utf-8") as fh:
         with platform_compat.file_lock(fh.fileno(), exclusive=exclusive):
             yield fh
+
+
+def _pr_observation_of(probe: Any) -> Any | None:
+    """The reading a fetcher published on itself this tick, or ``None``.
+
+    Duck-typed rather than imported, so this module names no probe class. A probe
+    is asked only for an object that can say whether it reached its subject; a
+    build whose probe publishes nothing answers ``None`` and every caller here
+    treats that as "not read", which fires.
+    """
+    observation = getattr(probe, "observation", None)
+    if observation is None:
+        return None
+    for attribute in ("reached", "is_terminal", "merged", "state"):
+        if not hasattr(observation, attribute):
+            return None
+    return observation
+
+
+#: Keys on a published reading that describe the TICK rather than the subject.
+#: ``observed_at`` is the clock, a remark's ``age_s`` grows on every tick, and
+#: ``first_seen_this_tick`` is the delta the core stamps for the judge. A digest
+#: carrying any of them would call every reading a change, and the comparison it
+#: exists for would never hold once.
+_PR_FACTS_TICK_KEYS = ("observed_at", "age_s", "first_seen_this_tick")
+
+
+def _pr_facts_digest(facts: Mapping[str, Any]) -> str:
+    """A stable digest of WHAT a pull-request reading says, ignoring WHEN it was read.
+
+    Two readings with the same digest describe the same subject state, so no criterion
+    ABOUT the subject can have become true between them. ``observation_status`` is part
+    of it, so a reading that went short of whole is a change rather than a match.
+
+    Returns ``""`` when the facts cannot be rendered, which no caller may read as a
+    match: an unanswerable comparison has to resolve toward spending the turn.
+    """
+
+    def strip(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {
+                key: strip(inner)
+                for key, inner in sorted(value.items())
+                if key not in _PR_FACTS_TICK_KEYS
+            }
+        if isinstance(value, (list, tuple)):
+            return [strip(item) for item in value]
+        return value
+
+    try:
+        rendered = json.dumps(strip(facts), sort_keys=True, default=str)
+    except Exception:
+        logger.debug("AutoNudge: could not digest a pull-request reading", exc_info=True)
+        return ""
+    return hashlib.sha256(rendered.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def infer_monitor(
@@ -5963,6 +6019,66 @@ class AutoNudgeService:
             return False
         return True
 
+    def _publish_pr_observation(
+        self, loop: NudgeLoop, monitor: MonitorState, observation: Any
+    ) -> bool:
+        """Make this tick's reading the loop's current pull-request observation.
+
+        Returns whether this reading says the SAME thing as the previous one, which
+        only this method can answer: it is the last reader of the previous reading
+        before it stores the new one. ``False`` whenever the comparison could not be
+        made at all, so an unanswerable one resolves toward spending the turn.
+
+        Two carriers, because the halves have two lifetimes. The typed facts and the
+        remark metadata go on the monitor record, which is durable and is what the
+        judge collector and the goal popover read. ``monitor_inspect`` does not: a
+        gated prompt loop is not a structured monitor, so that endpoint answers it
+        with a presence and cadence reading and no observation at all. The remark
+        BODIES go in a process-local stash, are picked up by the collector on this
+        same tick, and are written nowhere.
+
+        A reading the record refuses is not worth failing the tick over: the collector
+        then sees no reading, counts the target as unread, and the tick fires -- the
+        direction every uncertain path here resolves toward.
+        """
+        from kiro_crew import autonudge_judge as judge
+
+        try:
+            facts = observation.as_facts()
+        except Exception:
+            logger.debug("AutoNudge: could not render a pull-request reading", exc_info=True)
+            return False
+        previous = monitor.last_observation if isinstance(monitor.last_observation, dict) else {}
+        # Whether this reading says the same thing as the previous one. Computed HERE
+        # because this is the one place the previous reading still exists -- the line
+        # that stores the new facts below overwrites it. An empty digest means the
+        # comparison could not be made, and an unanswerable comparison is not a match.
+        this_digest = _pr_facts_digest(facts)
+        prior_digest = _pr_facts_digest(previous) if previous else ""
+        unchanged = bool(this_digest) and this_digest == prior_digest
+        previous_remarks = previous.get("remarks")
+        seen = {
+            str(row.get("id", ""))
+            for row in (previous_remarks if isinstance(previous_remarks, list) else [])
+            if isinstance(row, dict)
+        }
+        # Recorded as DATA on the reading, never acted on here: WHICH remarks are new
+        # is a fact the judge weighs against the owner's criterion, and a core that
+        # decided on it would be the comparator this design removes. Computed here
+        # because the previous reading lives here -- the fetcher holds no memory
+        # between ticks and cannot answer it.
+        for row in facts.get("remarks") or []:
+            if isinstance(row, dict):
+                row["first_seen_this_tick"] = str(row.get("id", "")) not in seen
+        monitor.last_observation = facts
+        monitor.last_observed_at = float(getattr(observation, "observed_at", 0.0) or time.time())
+        try:
+            judge.publish_pr_bodies(loop.id, observation.bodies())
+        except Exception:
+            logger.debug("AutoNudge: could not stash remark bodies", exc_info=True)
+        self._persist_soon()
+        return unchanged
+
     async def _monitor_tick_is_quiet(self, loop: NudgeLoop) -> bool:
         """Observe this loop's subject cheaply; say whether to skip the turn.
 
@@ -6168,7 +6284,27 @@ class AutoNudgeService:
             )
             return False
 
-        if verdict.outcome is irq.Outcome.TERMINAL:
+        # THE one deterministic mapping, and it lives here rather than in the reader
+        # or the judge. The reader fetches and judges nothing; the judge reads prose
+        # a third party wrote, so it must never be able to end a watch. Ending one is
+        # the single decision an owner cannot recover by waiting, so it is taken from
+        # a typed fact, by the layer that can act on it.
+        observation = _pr_observation_of(probe)
+        terminal = observation is not None and observation.is_terminal
+        #: Whether the reading published this tick says the same thing as the previous
+        #: one. Only the publish below can answer it, and only while the previous
+        #: reading is still stored, so it is carried from there rather than recomputed.
+        reading_unchanged = False
+        if observation is not None and observation.reached and not terminal:
+            # Published BEFORE the judge is asked, because this is the channel the
+            # judge reads its pull-request evidence through: the record carries who
+            # said what and when, and the bodies ride alongside in memory for this
+            # tick only. Written even when the reading is partial -- the collector
+            # reads the status and counts a partial reading as a target nobody read
+            # whole, which fires -- so a short board is visible rather than absent.
+            reading_unchanged = self._publish_pr_observation(loop, monitor, observation)
+
+        if terminal:
             # The subject is finished (a merged or closed pull request). Stop the
             # loop rather than firing: there is nothing left to service, and one
             # more turn would only rediscover that. ``expired`` is the existing
@@ -6205,10 +6341,10 @@ class AutoNudgeService:
             # a success. A MERGED subject is; one CLOSED WITHOUT MERGING ended on a
             # question -- reopen or abandon -- and recording SUCCESS there tells the
             # user "no action needed" about the one case that needs them most. The
-            # probe distinguishes the two, so this reads its KEYS rather than its
-            # prose, which would break the first time that wording is edited. No
-            # key at all (an unusable target) is also not a success.
-            merged = "merged" in verdict.keys
+            # reading distinguishes the two, and it is read as a typed fact rather
+            # than out of delivered prose, which would break the first time that
+            # wording is edited.
+            merged = observation is not None and observation.merged
             # EVERY field this transition writes has to be in here. The loop's own
             # ``stopped_reason`` is written alongside the monitor's, and leaving it
             # out of the rollback left a live loop tagged as terminated -- which the
@@ -6223,7 +6359,7 @@ class AutoNudgeService:
             logger.info(
                 "AutoNudge: loop %s subject reached a terminal state (%s)",
                 loop.id,
-                ",".join(verdict.keys) or "unattributed",
+                "merged" if merged else (observation.state.lower() if observation else "unknown"),
             )
             # SERIALIZED against ``update``. This path has no second await of its
             # own; this closes the other side of the same race, which is
@@ -6327,9 +6463,11 @@ class AutoNudgeService:
             self._emit("expired", loop)
             return True
 
-        if monitor.terminal_pending and verdict.outcome in (
-            irq.Outcome.QUIET,
-            irq.Outcome.WAKE,
+        if (
+            monitor.terminal_pending
+            and observation is not None
+            and observation.reached
+            and verdict.outcome is not irq.Outcome.FALLBACK
         ):
             # The subject came BACK. A channel loop defers its settlement as a durable
             # debt because only a delivered turn can carry the news, and that debt
@@ -6340,10 +6478,12 @@ class AutoNudgeService:
             # once and read at settlement, which is the same absence-shaped defect
             # this review has now found twelve times.
             #
-            # Only a TRUSTWORTHY observation clears it. A FALLBACK means the subject
-            # was NOT observed (a failed fetch, a probe defect), and letting an
-            # unobserved tick erase real debt would lose the terminal news for good --
-            # the opposite of the invariant that failure resolves toward spending.
+            # Only a TRUSTWORTHY reading clears it, and that needs BOTH signals to
+            # agree: the reading reached the subject, and the kernel reached a verdict
+            # about it. A reading that did not reach the subject proves nothing, and a
+            # FALLBACK says the kernel could not conclude -- letting either erase real
+            # debt would lose the terminal news for good, the opposite of the rule that
+            # failure resolves toward spending.
             monitor.terminal_pending = ""
             try:
                 async with self._lock:
@@ -6368,14 +6508,11 @@ class AutoNudgeService:
                 )
 
         if verdict.outcome is irq.Outcome.QUIET:
-            # The ONE tick a judge screens on a monitor-backed loop. The typed probe
-            # has already spoken and found nothing, so asking now cannot suppress a
-            # typed signal: every outcome that MEANS something -- a terminal, a wake,
-            # a fallback, an interrupted poll, a drifted target -- has returned above
-            # this line. What the judge adds here is the evidence the probe cannot
-            # read: a review left in prose, a comment thread, a watched session's
-            # transcript tail. ``None`` means this loop carries no judge, which leaves
-            # the probe's own quiet verdict standing exactly as it did before.
+            # The ONE tick a judge screens on a monitor-backed loop. Every outcome that
+            # MEANS something -- a terminal, a wake, a fallback, an interrupted poll, a
+            # drifted target -- has returned above this line. What the judge adds here is
+            # the evidence no typed reading produces: a review left in prose, a comment
+            # thread, a watched session's transcript tail.
             #
             # ASKED BEFORE the quiet counters are charged. A judge that answers wake
             # or fallback makes this a DELIVERED tick, and charging first would book
@@ -6386,6 +6523,32 @@ class AutoNudgeService:
             if judged is False:
                 # The judge overrides the probe's quiet on evidence the probe cannot
                 # read, so this tick spends a turn and is accounted for as one.
+                monitor.quiet_streak = 0
+                monitor.last_observed_at = time.time()
+                self._persist_soon()
+                return False
+            if judged is None and observation is not None and not reading_unchanged:
+                # No judge ran, and this probe is a FETCHER: it published a reading and
+                # raised no observations, so the kernel's quiet reports that nothing was
+                # DECIDED rather than that nothing is there. Charging it as quiet would
+                # withhold a failing check or a reviewer's request until the streak
+                # floor, with nothing on screen -- and the judge-less paths are the
+                # ordinary ones, not corners: an explicit ``judge: false``, a build with
+                # no collector, and this point's egress scope, which is fail-closed and
+                # ungranted on a stock install. So an unowned quiet DELIVERS.
+                #
+                # EXCEPT where the reading is byte-identical to the previous one, which
+                # is the one judge-less quiet that is earned rather than assumed: no
+                # criterion ABOUT the subject can have become true while the subject did
+                # not change, so nothing is being withheld. That keeps the cost promise
+                # true for a watch on a machine with no judge -- an unchanged board is
+                # still free -- and the streak floor still covers a criterion about
+                # elapsed time, which is the one kind a digest cannot see.
+                #
+                # Keyed on the published reading rather than on the loop's shape,
+                # because that is what says this probe judges nothing: a classifying
+                # probe reaches the same line having already found nothing, and its
+                # quiet is a finding that still stands on its own.
                 monitor.quiet_streak = 0
                 monitor.last_observed_at = time.time()
                 self._persist_soon()
@@ -6738,7 +6901,7 @@ class AutoNudgeService:
         owed terminal is simply gone: this returns False, the debt is dropped, and the
         next tick records the real one with the right classification.
 
-        Reuses the tick's probe machinery, and the same ``"merged" in keys`` rule the
+        Reuses the tick's fetch machinery, and the same merged-versus-closed rule the
         tick's own terminal branch applies, instead of adding a marker to remember what
         was already delivered. This review has paid for a defect at an existing site for
         each new piece of per-loop state, so re-asking is the cheaper way to answer.
@@ -6752,14 +6915,10 @@ class AutoNudgeService:
         # is the kernel's dedupe key -- ``poll``'s own contract says it "replaces the
         # cron job id in the state digest, so two drivers watching one subject keep
         # independent dedupe memories" -- so sharing the tick's key would let this
-        # re-read consume the tick's credit: a reopened subject with a fresh comment
-        # would be marked reported here, and then the next real tick would read it as
-        # unchanged and go quiet until the streak floor. A poll whose answer is
-        # discarded must not be able to swallow a signal, so it observes on its own
-        # memory and leaves the tick's untouched.
+        # re-read consume the tick's credit for the consecutive-failure backstop.
         identity = f"{loop.id}:{target.host_key}:terminal-recheck"
         try:
-            verdict = await asyncio.get_running_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, lambda: irq.poll(identity, target.message, probe)
             )
         except Exception:
@@ -6770,9 +6929,10 @@ class AutoNudgeService:
                 exc_info=True,
             )
             return False
-        if verdict.outcome is not irq.Outcome.TERMINAL:
+        observation = _pr_observation_of(probe)
+        if observation is None or not observation.is_terminal:
             return False
-        fresh = "success" if "merged" in verdict.keys else "blocked"
+        fresh = "success" if observation.merged else "blocked"
         if fresh != monitor.terminal_pending:
             logger.info(
                 "AutoNudge: loop %s owed a %s settlement but now observes %s -- dropping "
