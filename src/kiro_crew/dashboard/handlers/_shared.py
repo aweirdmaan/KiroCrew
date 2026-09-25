@@ -2434,7 +2434,11 @@ def skill_uri_for_key(
 
 
 def agent_skill_views(
-    data: dict[str, Any], agent_path: Path, state: DashboardState, session_key: str = ""
+    data: dict[str, Any],
+    agent_path: Path,
+    state: DashboardState,
+    session_key: str = "",
+    catalog: dict[str, Path] | None = None,
 ) -> tuple[list[str], list[str]]:
     """``(catalog_keys, unmanaged_uris)`` for *data*, from ONE catalog walk.
 
@@ -2443,15 +2447,18 @@ def agent_skill_views(
     enumerated skill accounts for) which are shown read-only and preserved on
     every write. Both are order-preserving; keys are de-duplicated.
 
+    Pass *catalog* (from :func:`enumerate_skill_catalog`) to reuse a walk the
+    caller already did instead of enumerating the roots again.
+
     Filesystem-heavy (it enumerates the skill roots) — callers on the asyncio
     event loop MUST run this off the loop.
     """
-    catalog = enumerate_skill_catalog(state, session_key)
+    entries = catalog if catalog is not None else enumerate_skill_catalog(state, session_key)
     keys: list[str] = []
     unmanaged: list[str] = []
     seen: set[str] = set()
     for uri in skill_resource_uris(data):
-        key = skill_key_for_uri(uri, agent_path, state, catalog)
+        key = skill_key_for_uri(uri, agent_path, state, entries)
         if key is None:
             unmanaged.append(uri)
         elif key not in seen:
@@ -2461,15 +2468,20 @@ def agent_skill_views(
 
 
 def agent_skill_keys(
-    data: dict[str, Any], agent_path: Path, state: DashboardState, session_key: str = ""
+    data: dict[str, Any],
+    agent_path: Path,
+    state: DashboardState,
+    session_key: str = "",
+    catalog: dict[str, Path] | None = None,
 ) -> list[str]:
     """Catalog keys for the skills *data* maps, de-duplicated, order-preserving.
 
     Only catalog-resolvable entries are returned — this is the set the Agent
     Templates editor owns and can rewrite. Wildcard / hand-authored URIs are
     excluded here and reported separately by :func:`agent_unmanaged_skill_uris`.
+    Pass *catalog* to reuse one walk, as for :func:`agent_skill_views`.
     """
-    return agent_skill_views(data, agent_path, state, session_key)[0]
+    return agent_skill_views(data, agent_path, state, session_key, catalog)[0]
 
 
 def agent_unmanaged_skill_uris(
@@ -2490,12 +2502,19 @@ def apply_skill_mapping(
     state: DashboardState,
     keys: list[str],
     session_key: str = "",
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], dict[str, Path]]:
     """Rewrite *data*'s ``skill://`` resources to *keys*, in place.
 
-    Returns ``(applied_keys, unknown_keys)``. Nothing is written when
-    *unknown_keys* is non-empty — the caller rejects the whole request so a
-    typo'd key can never partially apply.
+    Returns ``(applied_keys, unknown_keys, applied_uris, catalog)``. ``applied_uris[i]``
+    is the ``skill://`` resource written for ``applied_keys[i]``, in request order --
+    the one statement of which entries of the rewritten list are the managed ones,
+    resolved against the same catalog walk that validated the keys, so a caller
+    that must re-apply the request's order onto a later read of the spec never
+    has to guess it from the list's shape. ``catalog`` is that walk itself, so the
+    caller can resolve what it finally writes (:func:`agent_skill_keys` takes it)
+    against the snapshot the keys were validated with instead of walking the roots
+    a second time. Nothing is written when *unknown_keys* is non-empty -- the
+    caller rejects the whole request so a typo'd key can never partially apply.
 
     Invariants:
 
@@ -2523,7 +2542,7 @@ def apply_skill_mapping(
         applied.append(key)
         uris.append(uri)
     if unknown:
-        return applied, unknown
+        return applied, unknown, uris, catalog
 
     resources = data.get("resources") or []
     if not isinstance(resources, list):
@@ -2543,7 +2562,7 @@ def apply_skill_mapping(
         # key is absent/empty), and an agent with nothing mapped should fall
         # back to those defaults — so drop the key instead of writing [].
         data.pop("resources", None)
-    return applied, unknown
+    return applied, unknown, uris, catalog
 
 
 def list_skill_tree(skill_root: Path) -> list[dict[str, Any]]:

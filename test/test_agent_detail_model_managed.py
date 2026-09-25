@@ -186,7 +186,9 @@ def _mapping_stub(uris: list[str]):
 
     The unit under test is the delta merge, so the mapping's own catalog walk is not
     what is being exercised; stubbing it lets a test state the before/after resource
-    sets directly instead of provisioning a skill tree to imply them.
+    sets directly instead of provisioning a skill tree to imply them. The catalog it
+    hands back is empty for the same reason: the reply resolved against it is not what
+    these tests read.
     """
 
     def _apply(data, agent_path, state, keys, session_key=""):
@@ -201,7 +203,7 @@ def _mapping_stub(uris: list[str]):
             data["resources"] = merged
         else:
             data.pop("resources", None)
-        return list(keys), []
+        return list(keys), [], list(uris), {}
 
     return _apply
 
