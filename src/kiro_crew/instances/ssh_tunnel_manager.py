@@ -2064,7 +2064,7 @@ class SshTunnelManager:
         lock is the caller's job, not this method's.
 
         Returns ``False`` for every "cannot", leaving the 401 to be raised as a
-        mint failure: a parent mid-reconfiguration, one no longer connected,
+        mint failure: a parent mid-reconfiguration, one that is not connected,
         coordinates that do not validate, and a mint the parent's own remote
         refused.
         """

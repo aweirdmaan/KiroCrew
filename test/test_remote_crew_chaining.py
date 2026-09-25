@@ -325,7 +325,7 @@ class TestChainWalks:
         The exact chain matters, not just its length: the walk stops AT the id
         that repeats, so the caller sees the loop closing. Without the visit
         guard the bounded range still terminates, but it pads the chain with the
-        same two ids over and over and the closure is no longer readable."""
+        same two ids over and over and the closure is unreadable."""
         rows = [
             Instance(
                 id="a",
@@ -1079,9 +1079,9 @@ class TestDepthCap:
         assert resp.status == 400
         assert _resp_body(resp)["code"] == "chain_too_deep"
         assert reg.get("d") is None, "wrote the record it refused"
-        # Bound to the constant, not to the number 2: raising the cap must move
-        # this test's own expectation with it rather than leave it asserting a
-        # limit the product no longer has.
+        # Bound to the constant, not to the number 2: raising the cap moves this
+        # test's own expectation with it, instead of leaving it to assert a limit
+        # the product does not have.
         assert MAX_VIA_HOPS == 2, "the refusal above assumes a third hop is one too many"
 
     def test_an_unknown_parent_is_refused(self, tmp_path, monkeypatch):
