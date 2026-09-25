@@ -36,6 +36,11 @@ from kiro_crew.instances.registry import (
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
+# Stands in for "this crew's id on its PARENT" in fixtures that do not care what
+# it is. The one test that does care asserts on its own genuinely divergent pair,
+# because ids that coincide on both sides hide a mint aimed at the wrong one.
+VIA_ID = "peer-id"
+
 
 class _FakeTunnel:
     """Minimal stand-in for ``_SshTunnel``, recording what it was asked to forward."""
@@ -178,17 +183,35 @@ class TestChainFields:
             Instance(id="c", name="C", ssh_host="c-host", via_instance_id="b").validate()
         with pytest.raises(InvalidInstanceError, match="only a chained instance"):
             Instance(id="c", name="C", ssh_host="c-host", via_remote_port=5476).validate()
-        # Both set is the chained record, and it validates.
+        with pytest.raises(InvalidInstanceError, match="only a chained instance"):
+            Instance(id="c", name="C", ssh_host="c-host", via_remote_id=VIA_ID).validate()
+        # A chained record also needs the id its PARENT knows it by: without that
+        # the parent cannot be asked to mint, so the row could never connect.
+        with pytest.raises(InvalidInstanceError, match="needs via_remote_id"):
+            Instance(
+                id="c", name="C", ssh_host="c-host", via_instance_id="b", via_remote_port=5476
+            ).validate()
+        # All three set is the chained record, and it validates.
         Instance(
-            id="c", name="C", ssh_host="c-host", via_instance_id="b", via_remote_port=5476
+            id="c",
+            name="C",
+            ssh_host="c-host",
+            via_instance_id="b",
+            via_remote_port=5476,
+            via_remote_id=VIA_ID,
         ).validate()
-        # Neither set is every record written before chaining existed.
+        # None set is every record written before chaining existed.
         Instance(id="b", name="B", ssh_host="b-host").validate()
 
     def test_a_record_cannot_be_reached_through_itself(self):
         with pytest.raises(InvalidInstanceError, match="through itself"):
             Instance(
-                id="c", name="C", ssh_host="c-host", via_instance_id="c", via_remote_port=5476
+                id="c",
+                name="C",
+                ssh_host="c-host",
+                via_instance_id="c",
+                via_remote_port=5476,
+                via_remote_id=VIA_ID,
             ).validate()
 
     def test_a_malformed_hop_port_is_refused(self):
@@ -200,7 +223,21 @@ class TestChainFields:
                     ssh_host="c-host",
                     via_instance_id="b",
                     via_remote_port=bad,  # type: ignore[arg-type]
+                    via_remote_id=VIA_ID,
                 ).validate()
+
+    def test_a_parents_side_id_outside_the_grammar_is_refused(self):
+        """It ends up in a request path on the parent, so its shape is checked at
+        the boundary rather than trusted because it arrived on a record."""
+        with pytest.raises(InvalidInstanceError, match="via_remote_id"):
+            Instance(
+                id="c",
+                name="C",
+                ssh_host="c-host",
+                via_instance_id="b",
+                via_remote_port=5476,
+                via_remote_id="victim/disconnect?x=",
+            ).validate()
 
     def test_a_registry_file_written_before_chaining_loads_unchanged(self, tmp_path):
         """The feature must not make an existing instances.json unreadable."""
@@ -219,6 +256,9 @@ class TestChainFields:
         assert loaded is not None
         assert loaded.via_instance_id == ""
         assert loaded.via_remote_port == 0
+        # Including the parent-side id, which a file written before chaining
+        # cannot carry: the loader defaults it rather than refusing the record.
+        assert loaded.via_remote_id == ""
         # And it is still writable: an update must not fail on a field the
         # caller never touched.
         InstancesRegistry(path=path).update("b", was_connected=True)
@@ -232,6 +272,7 @@ class TestChainFields:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         reloaded = InstancesRegistry(path=tmp_path / "instances.json").get("c")
         assert reloaded is not None
@@ -242,8 +283,22 @@ class TestChainWalks:
     def _chain(self) -> list[Instance]:
         return [
             Instance(id="b", name="B", ssh_host="b-host"),
-            Instance(id="c", name="C", ssh_host="c-host", via_instance_id="b", via_remote_port=1),
-            Instance(id="d", name="D", ssh_host="d-host", via_instance_id="c", via_remote_port=2),
+            Instance(
+                id="c",
+                name="C",
+                ssh_host="c-host",
+                via_instance_id="b",
+                via_remote_port=1,
+                via_remote_id=VIA_ID,
+            ),
+            Instance(
+                id="d",
+                name="D",
+                ssh_host="d-host",
+                via_instance_id="c",
+                via_remote_port=2,
+                via_remote_id=VIA_ID,
+            ),
         ]
 
     def test_ancestors_are_nearest_first(self):
@@ -252,7 +307,14 @@ class TestChainWalks:
 
     def test_an_absent_parent_ends_the_walk(self):
         rows = [
-            Instance(id="c", name="C", ssh_host="c-host", via_instance_id="gone", via_remote_port=1)
+            Instance(
+                id="c",
+                name="C",
+                ssh_host="c-host",
+                via_instance_id="gone",
+                via_remote_port=1,
+                via_remote_id=VIA_ID,
+            )
         ]
         assert ancestor_ids(rows, "c") == ["gone"]
 
@@ -265,8 +327,22 @@ class TestChainWalks:
         guard the bounded range still terminates, but it pads the chain with the
         same two ids over and over and the closure is no longer readable."""
         rows = [
-            Instance(id="a", name="A", ssh_host="a-host", via_instance_id="b", via_remote_port=1),
-            Instance(id="b", name="B", ssh_host="b-host", via_instance_id="a", via_remote_port=2),
+            Instance(
+                id="a",
+                name="A",
+                ssh_host="a-host",
+                via_instance_id="b",
+                via_remote_port=1,
+                via_remote_id=VIA_ID,
+            ),
+            Instance(
+                id="b",
+                name="B",
+                ssh_host="b-host",
+                via_instance_id="a",
+                via_remote_port=2,
+                via_remote_id=VIA_ID,
+            ),
         ]
         assert ancestor_ids(rows, "a") == ["b", "a"]
         assert ancestor_ids(rows, "b") == ["a", "b"]
@@ -294,6 +370,7 @@ class TestChainedForward:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
 
         async def no_cycle(_inst, _port):
@@ -321,6 +398,7 @@ class TestChainedForward:
             instance_id="c",
             via_instance_id="gone",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         st = asyncio.run(mgr.connect("c"))
         assert st.state.value == "error"
@@ -343,6 +421,7 @@ class TestChainedForward:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         st = asyncio.run(mgr.connect("c"))
         assert st.state.value == "error"
@@ -362,6 +441,7 @@ class TestChainedForward:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         params = mgr._resolve_chained_transport(inst, reg.get("b"))
         assert params.forward_remote_port(inst.remote_port) == 53999
@@ -378,6 +458,7 @@ class TestChainedForward:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         out = asyncio.run(mgr.restart_remote("c"))
         assert out["ok"] is False
@@ -406,6 +487,7 @@ class TestChainedToken:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         relayed: list[str] = []
 
@@ -459,6 +541,7 @@ class TestChainedToken:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         ok, payload = asyncio.run(mgr.mint_embed_token("c", 9191))
         assert ok is False
@@ -480,9 +563,81 @@ class TestChainedToken:
         assert ok is False
         assert payload["status"] == 404
 
+    # ── the cycle guard ──────────────────────────────────────────────────────
 
-# ── the cycle guard ──────────────────────────────────────────────────────
+    def test_the_mint_asks_the_parent_by_the_parents_own_id_not_ours(self, tmp_path, monkeypatch):
+        """The two ids genuinely DIFFER here, which is the case a harness using
+        matching names cannot see: our row is `c` (derived from the name) while the
+        parent knows the crew as `c-2`. The parent looks it up by its own id, so
+        asking with ours makes it answer 404 for a crew it holds.
 
+        Also the TTL: the parent issues the token under ITS record for the crew, so
+        a refresh scheduled from our row's 20h default would run after a shorter
+        token has already expired.
+        """
+        from kiro_crew.instances import ssh_tunnel_manager as stm
+
+        reg, mgr = _mgr(tmp_path, monkeypatch)
+        reg.add(name="B", ssh_host="b-host", instance_id="b")
+        inst = reg.add(
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=53999,
+            via_remote_id="c-2",
+        )
+        assert inst.id == "c" and inst.via_remote_id == "c-2", "the ids must differ here"
+
+        _FakeMintSession.posted = []
+        monkeypatch.setattr(stm.aiohttp, "ClientSession", _FakeMintSession)
+        monkeypatch.setattr(
+            mgr, "_peer_target", lambda _pid, path: (f"http://127.0.0.1:1{path}", "kc")
+        )
+        monkeypatch.setattr(mgr, "_peer_cookie_header", lambda _pid, _name: {})
+
+        params = mgr._resolve_chained_transport(inst, reg.get("b"))
+        token = asyncio.run(mgr._mint_through_parent(inst, params))
+
+        assert token == "CHILD_TOKEN"
+        assert len(_FakeMintSession.posted) == 1
+        assert "/api/instances/c-2/embed-token" in _FakeMintSession.posted[0]
+        assert "/api/instances/c/embed-token" not in _FakeMintSession.posted[0]
+        assert mgr._chained_ttl["c"] == "2h", "kept our own TTL over the one the parent issued"
+        assert mgr._minted_ttl(inst) == "2h"
+
+    def test_a_ttl_the_parent_reports_unusably_falls_back_to_ours(self, tmp_path, monkeypatch):
+        """A peer's reply is untrusted. An unparseable lifetime is dropped rather
+        than refused: the token is good, and ours schedules early, never late."""
+        from kiro_crew.instances import ssh_tunnel_manager as stm
+
+        reg, mgr = _mgr(tmp_path, monkeypatch)
+        reg.add(name="B", ssh_host="b-host", instance_id="b")
+        inst = reg.add(
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            ttl="9h",
+            via_instance_id="b",
+            via_remote_port=53999,
+            via_remote_id="c-2",
+        )
+
+        _FakeMintSession.posted = []
+        _FakeMintSession.reply = {"token": "T", "port": 1, "ttl": "not-a-ttl"}
+        try:
+            monkeypatch.setattr(stm.aiohttp, "ClientSession", _FakeMintSession)
+            monkeypatch.setattr(
+                mgr, "_peer_target", lambda _pid, path: (f"http://127.0.0.1:1{path}", "kc")
+            )
+            monkeypatch.setattr(mgr, "_peer_cookie_header", lambda _pid, _name: {})
+            params = mgr._resolve_chained_transport(inst, reg.get("b"))
+            assert asyncio.run(mgr._mint_through_parent(inst, params)) == "T"
+        finally:
+            _FakeMintSession.reply = {"token": "CHILD_TOKEN", "port": 4242, "ttl": "2h"}
+
+        assert "c" not in mgr._chained_ttl
+        assert mgr._minted_ttl(inst) == "9h"
 
     def test_a_stored_id_cannot_inject_a_parent_control_plane_path(self, tmp_path, monkeypatch):
         """`Instance.from_dict` is deliberately tolerant, so a registry file written
@@ -495,20 +650,28 @@ class TestChainedToken:
         reg, mgr = _mgr(tmp_path, monkeypatch)
         reg.add(name="B", ssh_host="b-host", instance_id="b")
         valid = reg.add(
-            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=53999
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
         params = mgr._resolve_chained_transport(valid, reg.get("b"))
 
         hostile = Instance.from_dict(
             {
-                "id": "victim/disconnect?x=",
+                "id": "c",
                 "name": "C",
                 "ssh_host": "c-host",
                 "via_instance_id": "b",
                 "via_remote_port": 53999,
+                "via_remote_id": "victim/disconnect?x=",
             }
         )
-        assert hostile.id == "victim/disconnect?x=", "from_dict rejected it, so the risk is elsewhere"
+        assert (
+            hostile.via_remote_id == "victim/disconnect?x="
+        ), "from_dict rejected it, so the risk is elsewhere"
 
         dialled: list[str] = []
 
@@ -561,7 +724,9 @@ class TestChainedToken:
             if isinstance(node, ast.AsyncWith)
             for item in node.items
         ]
-        assert "self._lock" not in acquired, "the caller already holds it; taking it again deadlocks"
+        assert (
+            "self._lock" not in acquired
+        ), "the caller already holds it; taking it again deadlocks"
 
 
 class TestCycleGuard:
@@ -574,6 +739,7 @@ class TestCycleGuard:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
 
         async def fake_relay(_i, _params):
@@ -657,6 +823,51 @@ class TestCycleGuard:
 # ── the cascade ──────────────────────────────────────────────────────────
 
 
+class _FakeMintReader:
+    def __init__(self, raw: bytes):
+        self._raw = raw
+
+    async def read(self, _n: int) -> bytes:
+        return self._raw
+
+
+class _FakeMintResp:
+    def __init__(self, status: int, payload: dict):
+        self.status = status
+        self.content = _FakeMintReader(json.dumps(payload).encode("utf-8"))
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+class _FakeMintSession:
+    """Records the URL each chained mint is aimed at and answers with a canned reply.
+
+    The URL is what the assertion is really about: the path carries the crew's id
+    as the PARENT knows it, and a fake that forgets the URL cannot tell the right
+    id from the wrong one.
+    """
+
+    posted: list[str] = []
+    reply: dict = {"token": "CHILD_TOKEN", "port": 4242, "ttl": "2h"}
+
+    def __init__(self, *_a, **_kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    def post(self, url, **_kw):
+        _FakeMintSession.posted.append(url)
+        return _FakeMintResp(200, _FakeMintSession.reply)
+
+
 class _FakeMgr:
     """A manager whose forwards stop cleanly, except the ids named in *live*.
 
@@ -690,6 +901,7 @@ class TestChainCascade:
             instance_id="c",
             via_instance_id="b",
             via_remote_port=53999,
+            via_remote_id=VIA_ID,
         )
 
         async def no_cycle(_inst, _port):
@@ -721,10 +933,20 @@ class TestChainCascade:
         reg = InstancesRegistry(path=tmp_path / "instances.json")
         reg.add(name="B", ssh_host="b-host", instance_id="b")
         reg.add(
-            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=1,
+            via_remote_id=VIA_ID,
         )
         reg.add(
-            name="D", ssh_host="d-host", instance_id="d", via_instance_id="c", via_remote_port=2
+            name="D",
+            ssh_host="d-host",
+            instance_id="d",
+            via_instance_id="c",
+            via_remote_port=2,
+            via_remote_id=VIA_ID,
         )
         reg.add(name="Other", ssh_host="other-host", instance_id="other")
 
@@ -744,7 +966,12 @@ class TestChainCascade:
         reg = InstancesRegistry(path=tmp_path / "instances.json")
         reg.add(name="B", ssh_host="b-host", instance_id="b")
         reg.add(
-            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=1,
+            via_remote_id=VIA_ID,
         )
 
         resp = asyncio.run(
@@ -756,7 +983,10 @@ class TestChainCascade:
         body = _resp_body(resp)
         assert body["code"] == "remove_forward_live"
         assert body["still_running"] == ["c"]
-        assert sorted(i.id for i in reg.list()) == ["b", "c"], "deleted a row whose forward is alive"
+        assert sorted(i.id for i in reg.list()) == [
+            "b",
+            "c",
+        ], "deleted a row whose forward is alive"
 
     def test_the_rows_go_leaves_first_so_no_row_outlives_its_parent(self, tmp_path, monkeypatch):
         """An interrupted sweep may leave a parent with fewer children, which still
@@ -767,10 +997,20 @@ class TestChainCascade:
         reg = InstancesRegistry(path=tmp_path / "instances.json")
         reg.add(name="B", ssh_host="b-host", instance_id="b")
         reg.add(
-            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=1,
+            via_remote_id=VIA_ID,
         )
         reg.add(
-            name="D", ssh_host="d-host", instance_id="d", via_instance_id="c", via_remote_port=2
+            name="D",
+            ssh_host="d-host",
+            instance_id="d",
+            via_instance_id="c",
+            via_remote_port=2,
+            via_remote_id=VIA_ID,
         )
 
         order: list[str] = []
@@ -807,6 +1047,7 @@ class TestDepthCap:
             "ssh_host": "c-host",
             "id": "c",
             "via_instance_id": "b",
+            "via_remote_id": VIA_ID,
             "via_remote_port": 53999,
         }
         resp = asyncio.run(handlers.api_instances_add(_FakeReq(_State(reg), body=body)))
@@ -819,19 +1060,29 @@ class TestDepthCap:
         _enable(tmp_path, monkeypatch)
         reg = self._reg(tmp_path)
         reg.add(
-            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=1,
+            via_remote_id=VIA_ID,
         )
         body = {
             "name": "D",
             "ssh_host": "d-host",
             "id": "d",
             "via_instance_id": "c",
+            "via_remote_id": VIA_ID,
             "via_remote_port": 2,
         }
         resp = asyncio.run(handlers.api_instances_add(_FakeReq(_State(reg), body=body)))
         assert resp.status == 400
         assert _resp_body(resp)["code"] == "chain_too_deep"
         assert reg.get("d") is None, "wrote the record it refused"
+        # Bound to the constant, not to the number 2: raising the cap must move
+        # this test's own expectation with it rather than leave it asserting a
+        # limit the product no longer has.
+        assert MAX_VIA_HOPS == 2, "the refusal above assumes a third hop is one too many"
 
     def test_an_unknown_parent_is_refused(self, tmp_path, monkeypatch):
         from kiro_crew.dashboard import handlers_instances as handlers
@@ -843,6 +1094,7 @@ class TestDepthCap:
             "ssh_host": "c-host",
             "id": "c",
             "via_instance_id": "nope",
+            "via_remote_id": VIA_ID,
             "via_remote_port": 1,
         }
         resp = asyncio.run(handlers.api_instances_add(_FakeReq(_State(reg), body=body)))
@@ -865,6 +1117,7 @@ class TestDepthCap:
             "ssh_host": "c-host",
             "id": "c",
             "via_instance_id": "b",
+            "via_remote_id": VIA_ID,
             "via_remote_port": 1,
         }
         resp = asyncio.run(handlers.api_instances_add(_FakeReq(_State(reg), body=body)))
@@ -882,7 +1135,12 @@ class TestDepthCap:
         _enable(tmp_path, monkeypatch)
         reg = self._reg(tmp_path)
         reg.add(
-            name="C", ssh_host="c-host", instance_id="c", via_instance_id="b", via_remote_port=1
+            name="C",
+            ssh_host="c-host",
+            instance_id="c",
+            via_instance_id="b",
+            via_remote_port=1,
+            via_remote_id=VIA_ID,
         )
         resp = asyncio.run(
             handlers.api_instances_update(

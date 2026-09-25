@@ -70,7 +70,11 @@ import {
 } from '../../components/ui/dropdown-menu'
 import ErrorNotice from '../../components/ErrorNotice'
 import ErrorBoundary from '../../components/ErrorBoundary'
-import { announceChainedCrew } from '../../lib/chainAnnounce'
+import {
+  announceChainedCrew,
+  CHAIN_REFUSAL_MAX,
+  CHAINED_CREW_REFUSED_MESSAGE,
+} from '../../lib/chainAnnounce'
 import {
   BUILTIN_REMOTE_PROVISIONER_KINDS,
   canRenderRemoteProvisionerKind,
@@ -1513,6 +1517,10 @@ export function RemoteCrewPanel() {
   // row disappears on its own when the teardown finishes.
   const [deletingTags, setDeletingTags] = useState<Set<string>>(new Set())
   const [actionErr, setActionErr] = useState<string | null>(null)
+  // A crew connected HERE that the gateway showing this page declined to adopt as
+  // a tab of its own. Separate from `actionErr` because the connect succeeded:
+  // folding it in would report a working crew as a failed connect.
+  const [chainRefusal, setChainRefusal] = useState<string | null>(null)
   // The last sign-in fetch/recheck outcome, for the job it belongs to. Rendered
   // inside that job's sign-in block, beside the button that produced it.
   const [signinNotice, setSigninNotice] = useState<({ jobId: string } & SigninNotice) | null>(null)
@@ -1774,6 +1782,27 @@ export function RemoteCrewPanel() {
   const reloadLaunches = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['cloud', 'launches'] })
   }, [queryClient])
+
+  // The other half of the announce. When the gateway showing this page refuses a
+  // crew we announced, only IT holds the reason -- the depth cap and the cycle
+  // guard are its decisions, taken against a registry this pane never sees -- so
+  // without this the crew connects here and silently never appears up there.
+  //
+  // Accepted only from our own parent frame. This pane cannot name the host's
+  // origin (a cross-origin iframe cannot read `parent.location`), which is why the
+  // upward notice is posted to '*'; the check available on THIS side is the sender
+  // identity, and `e.source !== window.parent` rejects every other frame.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== window.parent) return
+      const d = e.data
+      if (!d || typeof d !== 'object' || d.type !== CHAINED_CREW_REFUSED_MESSAGE) return
+      const reason = typeof d.reason === 'string' ? d.reason.slice(0, CHAIN_REFUSAL_MAX) : ''
+      setChainRefusal(reason || i18nT('pages.settings.instancesPanel.unknown_error'))
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
 
   const connectMutation = useMutation({
     mutationFn: (id: string) => api.connectInstance(id),
@@ -2131,6 +2160,18 @@ export function RemoteCrewPanel() {
           message here (a refused connect, a failed diagnose, a rejected launch)
           is a gateway-side failure the agent can look into. */}
       {actionErr && <ErrorNotice message={actionErr} onDismiss={() => setActionErr(null)} className="mb-3" askAgent />}
+      {chainRefusal && (
+        // askAgent on: the reason names a limit of the arrangement (too deep, a
+        // loop) rather than something to retype here, so the next step is a
+        // conversation about the topology, not another press of Connect.
+        <ErrorNotice
+          message={chainRefusal}
+          onDismiss={() => setChainRefusal(null)}
+          className="mb-3"
+          askAgent
+          testId="remote-crew-chain-refused"
+        />
+      )}
       {/* A `warn` diagnosis names the broken link (`diagnosis.reason`, or the
           tunnel's own `status.error`), so it is an error surface. The structured
           `report` is passed when the journal produced one, so the hand-off carries

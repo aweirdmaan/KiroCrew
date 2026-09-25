@@ -40,6 +40,66 @@ export interface ChainedCrewNotice {
 
 export const CHAINED_CREW_MESSAGE = 'mc-instance-ready'
 
+/** The host's answer when it could NOT adopt an announced crew.
+ *
+ * The connect SUCCEEDED here -- the crew is up and reachable on this gateway --
+ * and only the host's attempt to show it as a tab of its own failed, so the two
+ * facts have to be reported together or the user reads a working crew as broken.
+ * The host is the only side that knows the reason: the depth cap and the cycle
+ * guard are its gateway's decisions, taken against a registry this pane never
+ * sees.
+ */
+export const CHAINED_CREW_REFUSED_MESSAGE = 'mc-instance-refused'
+
+/** What the host tells the pane about a crew it declined to adopt. */
+export interface ChainedCrewRefusal {
+  /** The crew's id in OUR registry, so the panel can name which crew it was. */
+  id: string
+  /** The gateway's own reason, already user-facing. */
+  reason: string
+}
+
+/** Cap on the relayed reason. It crosses a postMessage boundary, so it is
+ *  untrusted LENGTH as well as untrusted content, and it is rendered into a
+ *  notice sized for a sentence. Generous past any honest gateway reason. */
+export const CHAIN_REFUSAL_MAX = 400
+
+/** Caps on the notice's two free-text fields, for the same reason: the payload is
+ *  untrusted length as well as untrusted content. Sized past any honest value --
+ *  a crew name is a label a person typed, and a host string is an ssh alias or an
+ *  FQDN, which DNS itself caps at 253. */
+export const CHAINED_NAME_MAX = 200
+export const CHAINED_HOST_MAX = 255
+
+/** The instance-id grammar, mirroring the registry's own. The announced id ends
+ *  up in a request path on the announcing gateway, so its shape is checked here
+ *  as well as there. */
+export const CHAINED_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/
+
+/**
+ * Read an inbound notice, or ``null`` if it is not one this host can act on.
+ *
+ * Pure and exported so the rules are testable without a host: every field came
+ * from frame code, and the SENDER being trusted (its origin resolved to a warm
+ * pane) says nothing about the PAYLOAD. A missing `id` is fatal rather than
+ * cosmetic -- it is the id the parent knows the crew by, and without it the mint
+ * would be aimed at an id derived here that the parent does not hold.
+ */
+export function readChainedCrewNotice(raw: unknown): ChainedCrewNotice | null {
+  const d = (raw ?? {}) as Record<string, unknown>
+  const port = Number(d.port)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+  const name = typeof d.name === 'string' ? d.name.slice(0, CHAINED_NAME_MAX) : ''
+  const sshHost = typeof d.sshHost === 'string' ? d.sshHost.slice(0, CHAINED_HOST_MAX) : ''
+  const id = typeof d.id === 'string' && CHAINED_ID_RE.test(d.id) ? d.id : ''
+  if (!name || !sshHost || !id) return null
+  const remote = Number(d.remotePort)
+  // A crew's own gateway port is a record here, not a dial target, so an
+  // out-of-range value is dropped rather than refusing the whole notice.
+  const remotePort = Number.isInteger(remote) && remote >= 1 && remote <= 65535 ? remote : 0
+  return { id, name, sshHost, remotePort, port }
+}
+
 /**
  * Tell the host a crew is connected here and reachable through us.
  *

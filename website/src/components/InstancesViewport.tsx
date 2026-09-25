@@ -35,7 +35,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { Trans } from 'react-i18next'
 import { api, type InstanceView } from '../api/client'
-import { CHAINED_CREW_MESSAGE } from '../lib/chainAnnounce'
+import {
+  CHAINED_CREW_MESSAGE,
+  CHAINED_CREW_REFUSED_MESSAGE,
+  readChainedCrewNotice,
+} from '../lib/chainAnnounce'
 import { WARM_SET_CAP_AUTO_CEILING } from '../utils/remoteCrew'
 import { SettingsLink } from './SettingsLink'
 import { useAppDispatch, useAppSelector, useAppStore } from '../store'
@@ -106,14 +110,6 @@ const AUTO_WARM_STAGGER_MS = 1_500
 // leave the very loop this cap exists to bound running unbounded.
 const MAX_REACTIVE_REMINTS = 3
 
-// Caps on the two free-text fields of a pane's chained-crew notice. The payload
-// crosses a postMessage boundary, so it is untrusted length as well as untrusted
-// content: the gateway validates the charset and refuses a malformed value, and
-// these bound what is sent to it in the first place. Sized past any honest value
-// — a crew name is a label a person typed, and a host string is an ssh alias or
-// an FQDN, which DNS itself caps at 253.
-const CHAINED_NAME_MAX = 200
-const CHAINED_HOST_MAX = 255
 
 /** Parse a ``<int>[hm]`` TTL (e.g. "20h", "30m") to seconds; 0 if unparseable. */
 function ttlToSeconds(ttl: string): number {
@@ -297,21 +293,23 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
   // then handed to the gateway, which owns the two decisions that matter: whether
   // the chain is too deep, and whether it closes a loop back onto us.
   //
-  // Idempotent by (parent, host): a pane re-announces on every reconnect, and its
-  // loopback port changes each time. An existing row is re-pointed at the new port
-  // rather than duplicated, which is also what repairs a chain after the pane's own
-  // gateway restarts.
+  // Idempotent by (parent, the parent's id for the crew): a pane re-announces on
+  // every reconnect, and its loopback port changes each time. An existing row is
+  // re-pointed at the new port rather than duplicated, which is also what repairs
+  // a chain after the pane's own gateway restarts.
   const adoptChainedCrew = useCallback(
     async (parentId: string, raw: unknown) => {
-      const d = (raw ?? {}) as Record<string, unknown>
-      const port = Number(d.port)
-      const remotePort = Number(d.remotePort)
-      const name = typeof d.name === 'string' ? d.name.slice(0, CHAINED_NAME_MAX) : ''
-      const host = typeof d.sshHost === 'string' ? d.sshHost.slice(0, CHAINED_HOST_MAX) : ''
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return
-      if (!name || !host) return
+      // Every field came from frame code. The SENDER is trusted (its origin
+      // resolved to a warm pane above); the PAYLOAD is not, and the rules live in
+      // `readChainedCrewNotice` so they can be tested without a host.
+      const notice = readChainedCrewNotice(raw)
+      if (!notice) return
+      const { id: remoteId, name, sshHost: host, remotePort, port } = notice
+      // Keyed on the PARENT's id for the crew, not on its host string: one machine
+      // answers to many spellings, so a host key both misses a re-announce that
+      // spells it differently and collides across two crews on one machine.
       const existing = instancesRef.current.find(
-        i => i.via_instance_id === parentId && i.ssh_host === host,
+        i => i.via_instance_id === parentId && i.via_remote_id === remoteId,
       )
       try {
         if (existing) {
@@ -330,20 +328,41 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
               : {}),
             via_instance_id: parentId,
             via_remote_port: port,
+            via_remote_id: remoteId,
           })
           paneLog('chain-added', { id: added.id, parentId, port })
         }
         void queryClient.invalidateQueries({ queryKey: ['instances'] })
       } catch (err) {
         // A refusal is the expected outcome for a chain that is too deep or that
-        // loops, and it belongs on the pane's own Remote Crew panel, which already
-        // shows the gateway's reason for the connect it made. Journaling it here is
-        // what makes the hub's side of the decision visible at all.
-        paneLog('chain-refused', {
-          parentId,
-          port,
-          error: (err as Error)?.message || 'unknown',
-        })
+        // loops, and the pane is where the user acted: its Remote Crew panel
+        // already shows the gateway's reason for the connect it made, and this is
+        // the other half of that sentence. Only we hold the reason -- the depth cap
+        // and the cycle guard are OUR gateway's decisions, taken against a registry
+        // the pane never sees -- so a refusal we keep to ourselves reads to the user
+        // as a crew that connected and then silently failed to appear.
+        const reason = (err as Error)?.message || ''
+        paneLog('chain-refused', { parentId, port, error: reason || 'unknown' })
+        const el = iframeRefs.current.get(parentId)
+        const w = warmRef.current[parentId]
+        if (el?.contentWindow && w) {
+          // Addressed to the pane's exact loopback origin, never '*': the same
+          // rule every other downward post here follows.
+          const origin = `${window.location.protocol}//${window.location.hostname}:${w.port}`
+          try {
+            el.contentWindow.postMessage(
+              {
+                type: CHAINED_CREW_REFUSED_MESSAGE,
+                v: 1,
+                id: remoteId,
+                reason,
+              },
+              origin,
+            )
+          } catch {
+            /* frame mid-navigation: the panel keeps the connect it already reported */
+          }
+        }
       }
     },
     [queryClient],

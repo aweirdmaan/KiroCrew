@@ -345,9 +345,12 @@ async def api_instances_add(request: web.Request) -> web.Response:
     """POST /api/instances — add a configured instance.
 
     ``via_instance_id`` + ``via_remote_port`` add a CHAINED crew: one this gateway
-    reaches by riding a hop an already-configured crew holds. The depth cap and
-    the parent's own suitability are decided here, before anything is written or
-    dialled — see :func:`_chain_refusal`.
+    reaches by riding a hop an already-configured crew holds. ``via_remote_id`` is
+    that crew's id in the PARENT's registry, which is the id the parent looks it up
+    by when asked to mint its token -- an id derived from the name here would only
+    coincide with it by luck. The depth cap and the parent's own suitability are
+    decided here, before anything is written or dialled -- see
+    :func:`_chain_refusal`.
     """
     denied = _guard(request, "add")
     if denied is not None:
@@ -383,6 +386,7 @@ async def api_instances_add(request: web.Request) -> web.Response:
             aws_region=str(body.get("aws_region", "")),
             via_instance_id=via_instance_id,
             via_remote_port=int(body.get("via_remote_port", 0)),
+            via_remote_id=str(body.get("via_remote_id", "")),
             instance_id=body.get("id"),
         )
     except DuplicateInstanceError as e:

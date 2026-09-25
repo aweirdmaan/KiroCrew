@@ -220,11 +220,21 @@ class Instance:
     # ``ssh_host``/``remote_port``, which describe where the crew's gateway
     # listens on its OWN machine and stay informational.
     #
-    # Both empty is a top-level instance, which is every record written before
-    # chaining existed; the loader defaults them, so an old registry file is read
-    # unchanged.
+    # ``via_remote_id`` is this crew's id in the PARENT's registry, which is a
+    # different fact from either of those: ``via_instance_id`` names the parent
+    # here, while this names the CHILD there. The parent is the side that mints
+    # this crew's token, and it looks the crew up by its own id, so that is the
+    # id the mint request must carry. An id derived from the name here would only
+    # coincide with it by luck — a name collision, a rename on the parent, or an
+    # explicitly assigned id makes them differ, and the parent then answers 404
+    # for a crew it holds.
+    #
+    # All three empty is a top-level instance, which is every record written
+    # before chaining existed; the loader defaults them, so an old registry file
+    # is read unchanged.
     via_instance_id: str = ""
     via_remote_port: int = _UNALLOCATED_PORT
+    via_remote_id: str = ""
     # Sticky "connection intent" — the source of truth for whether a tab should
     # exist for this instance. Set True when a tunnel is opened and cleared ONLY
     # on an explicit user disconnect; deliberately LEFT TRUE across gateway
@@ -395,6 +405,21 @@ class Instance:
                 f"invalid via_remote_port {self.via_remote_port!r}: only a chained instance "
                 f"(one with via_instance_id) has a port on a parent"
             )
+        if self.via_remote_id and not _ID_RE.match(self.via_remote_id):
+            raise InvalidInstanceError(
+                f"invalid via_remote_id {self.via_remote_id!r}: must match {_ID_RE.pattern}"
+            )
+        if self.via_instance_id and not self.via_remote_id:
+            raise InvalidInstanceError(
+                "a chained instance needs via_remote_id: the parent mints this crew's token "
+                "and looks it up by ITS OWN id for the crew, which an id derived here does "
+                "not reliably equal"
+            )
+        if self.via_remote_id and not self.via_instance_id:
+            raise InvalidInstanceError(
+                f"invalid via_remote_id {self.via_remote_id!r}: only a chained instance "
+                f"(one with via_instance_id) has an id on a parent"
+            )
 
     def to_dict(self) -> dict:
         """Serialize to the JSON shape stored in ``instances.json``."""
@@ -414,6 +439,7 @@ class Instance:
             "provisioner_id": self.provisioner_id,
             "via_instance_id": self.via_instance_id,
             "via_remote_port": self.via_remote_port,
+            "via_remote_id": self.via_remote_id,
             "was_connected": self.was_connected,
             "forwarder_pid": self.forwarder_pid,
             "forwarder_start": self.forwarder_start,
@@ -456,6 +482,7 @@ class Instance:
             # normalizes to the "no hop" sentinel rather than failing every later
             # update() on a field the caller never touched.
             via_remote_port=max(_UNALLOCATED_PORT, _as_int(data.get("via_remote_port"), 0)),
+            via_remote_id=str(data.get("via_remote_id", "") or ""),
             was_connected=bool(data.get("was_connected", False)),
             # max(): a hand-edited negative pid normalizes to the sentinel
             # rather than poisoning every later update() with a validate error
@@ -683,6 +710,7 @@ class InstancesRegistry:
         provisioner_id: str = "",
         via_instance_id: str = "",
         via_remote_port: int = _UNALLOCATED_PORT,
+        via_remote_id: str = "",
         instance_id: str | None = None,
     ) -> Instance:
         """Add a new instance and return it.
@@ -694,11 +722,13 @@ class InstancesRegistry:
         *connection_method* selects the transport ("ssh", "ssm" or "fargate"); the
         fields required depend on it -- see :meth:`Instance.validate`.
 
-        *via_instance_id* / *via_remote_port* make the record CHAINED: it is
-        reached through another instance's already-open hop rather than dialled
-        directly. The pair is validated for shape here; that the parent exists,
-        is itself reachable, and does not make the chain too deep is decided by
-        the caller, which is the only layer that sees the whole chain.
+        *via_instance_id* / *via_remote_port* / *via_remote_id* make the record
+        CHAINED: it is reached through another instance's already-open hop rather
+        than dialled directly. ``via_remote_id`` is this crew's id in the PARENT's
+        registry, which is what the parent looks it up by when it mints the token.
+        The trio is validated for shape here; that the parent exists, is itself
+        reachable, and does not make the chain too deep is decided by the caller,
+        which is the only layer that sees the whole chain.
         """
         with self._lock:
             doc = self._read()
@@ -732,6 +762,7 @@ class InstancesRegistry:
                 provisioner_id=provisioner_id,
                 via_instance_id=via_instance_id,
                 via_remote_port=via_remote_port,
+                via_remote_id=via_remote_id,
                 was_connected=False,
             )
             inst.validate()

@@ -122,8 +122,8 @@ from kiro_crew.instances.diagnostics import (
     diagnose_instance_ssm,
 )
 from kiro_crew.instances.port_allocator import PortAllocator, _is_addr_free, _is_port_free
+from kiro_crew.instances.registry import _ID_RE as _INSTANCE_ID_RE
 from kiro_crew.instances.registry import (
-    _ID_RE as _INSTANCE_ID_RE,
     _NO_FORWARDER_PID,
     _UNALLOCATED_PORT,
     MAX_VIA_HOPS,
@@ -132,6 +132,7 @@ from kiro_crew.instances.registry import (
     InstancesRegistry,
     ancestor_ids,
     descendant_ids,
+    validate_ttl,
 )
 from kiro_crew.instances.ssm_token_mint import (
     mint_remote_token_ssm,
@@ -1469,6 +1470,13 @@ class SshTunnelManager:
         # report *why* (e.g. a startup auto-revive that couldn't reach the host).
         # Cleared on a successful connect or an explicit disconnect.
         self._last_error: dict[str, str] = {}
+        # The TTL a CHAINED crew's current token was actually issued under, keyed
+        # by our id for that crew. A chained token is minted by the parent under
+        # the PARENT's record for the crew, which this gateway cannot know: our own
+        # row defaults to 20h, so scheduling the refresh from it would place the
+        # refresh after a shorter token has already expired. Written by the chained
+        # mint that produced the token, so it always describes the token held.
+        self._chained_ttl: dict[str, str] = {}
         self._lock = asyncio.Lock()
         # Self-heal: consecutive recovery attempts per instance (reset on a
         # successful rebuild) + live recovery task refs (stored so they aren't
@@ -2029,6 +2037,18 @@ class SshTunnelManager:
                 )
         return ""
 
+    def _minted_ttl(self, inst: Instance) -> str:
+        """The TTL a freshly minted token for *inst* should be stored under.
+
+        A CHAINED crew's token was issued by its parent, under the parent's own
+        record for that crew; every other token was issued under ours. Falls back
+        to ours when the parent reported nothing usable, which schedules the
+        refresh early rather than late.
+        """
+        if inst.via_instance_id:
+            return self._chained_ttl.get(inst.id) or inst.ttl
+        return inst.ttl
+
     async def _remint_parent_under_lock(self, parent_id: str) -> bool:
         """Re-mint *parent_id*'s own credential with the manager lock ALREADY HELD.
 
@@ -2068,7 +2088,7 @@ class SshTunnelManager:
         # correct if a caller ever awaits between acquiring and arriving here.
         if parent_id not in self._tunnels:
             return False
-        self._store_token(parent_id, token, inst.ttl)
+        self._store_token(parent_id, token, self._minted_ttl(inst))
         logger.info("Re-minted the credential for parent %s", parent_id)  # no token in logs
         return True
 
@@ -2076,9 +2096,10 @@ class SshTunnelManager:
         """Ask the parent crew to mint *inst*'s token with OUR embed parent port.
 
         A NARROW carrier, like :meth:`peer_capability`: the path is built here from
-        the child's id, never supplied by a caller, and the only body field is the
-        port this gateway serves its own dashboard on. It runs over the parent's
-        already-open forward with the parent's port-scoped cookie, so:
+        the crew's id IN THE PARENT's registry, never supplied by a caller, and the
+        only body field is the port this gateway serves its own dashboard on. It
+        runs over the parent's already-open forward with the parent's port-scoped
+        cookie, so:
 
         * the parent's credential never leaves this object and never reaches the
           browser — the pane's postMessage relay only ever carries "crew X is up
@@ -2098,17 +2119,23 @@ class SshTunnelManager:
         mint-failure handling applies unchanged.
         """
         parent_id = params.via_instance_id
-        # A STORED id reaching a request path has never been through `validate`:
-        # `Instance.from_dict` is deliberately tolerant, so a registry file written
-        # by hand or by an agent can carry any string here. Unchecked, an id like
-        # `victim/disconnect?x=` would interpolate into a DIFFERENT authenticated
-        # route on the parent and spend our credential for it there. Refuse it,
-        # then still encode as exactly one segment.
-        if not _INSTANCE_ID_RE.match(inst.id):
+        # The id the PARENT knows this crew by. It is the only one the parent can
+        # look up: our own id is derived from the name HERE and equals the parent's
+        # only by luck, so a name collision, a rename there, or an explicitly
+        # assigned id makes them differ and the parent answers 404 for a crew it
+        # holds. A STORED id reaching a request path has also never been through
+        # `validate` -- `Instance.from_dict` is deliberately tolerant, so a registry
+        # file written by hand or by an agent can carry any string. Unchecked, an id
+        # like `victim/disconnect?x=` would interpolate into a DIFFERENT
+        # authenticated route on the parent and spend our credential for it there.
+        # Refuse it, then still encode as exactly one segment.
+        child_id = inst.via_remote_id
+        if not _INSTANCE_ID_RE.match(child_id):
             raise TokenMintError(
-                f"crew {inst.id!r} has an id this gateway will not place in a request path"
+                f"crew {inst.id!r} carries no usable id for that crew on {parent_id!r}, so the "
+                f"parent cannot be asked to mint a token for it"
             )
-        path = f"/api/instances/{quote(inst.id, safe='')}/embed-token"
+        path = f"/api/instances/{quote(child_id, safe='')}/embed-token"
         body = json.dumps({"embed_parent_port": int(self._parent_port)}).encode("utf-8")
         # ONE budget for the whole call, retry included. This runs under the
         # manager lock, so the ceiling a concurrent connect or disconnect waits on
@@ -2148,8 +2175,9 @@ class SshTunnelManager:
                             raise TokenMintError(f"crew {parent_id!r} rejected our credential")
                         if resp.status in (404, 405):
                             raise TokenMintError(
-                                f"crew {parent_id!r} cannot mint for a crew behind it; update "
-                                f"that gateway to chain through it"
+                                f"crew {parent_id!r} did not mint for {child_id!r}: either it no "
+                                f"longer holds that crew, or its build has no endpoint for "
+                                f"chaining through it"
                             )
                         if not 200 <= resp.status < 300:
                             raise TokenMintError(
@@ -2171,6 +2199,21 @@ class SshTunnelManager:
                             raise TokenMintError(
                                 f"crew {parent_id!r} returned no token for {inst.id!r}"
                             )
+                        reported_ttl = payload.get("ttl")
+                        # Untrusted, like every other field of a peer's reply. A
+                        # value we cannot parse is dropped rather than refused: the
+                        # token itself is good, and our own TTL is a safe upper
+                        # bound to schedule from -- too early, never too late.
+                        if isinstance(reported_ttl, str) and reported_ttl:
+                            try:
+                                validate_ttl(reported_ttl)
+                            except Exception:
+                                logger.info(
+                                    "Crew %s reported an unusable token lifetime; keeping ours",
+                                    parent_id,
+                                )
+                            else:
+                                self._chained_ttl[inst.id] = reported_ttl
                         return token
             except TokenMintError:
                 raise
@@ -2244,11 +2287,14 @@ class SshTunnelManager:
         loads with, and overwriting it with a token scoped to someone else's page
         would break our own pane for the crew we just helped somebody else reach.
 
-        Returns ``(ok, payload)``. On success the payload carries the ``token`` and
-        the loopback ``port`` our own forward listens on, which is the hop the hub
-        forwards to. On failure it carries ``error`` / ``code`` plus the HTTP
-        ``status`` the route should answer with, so the handler translates without
-        string-matching.
+        Returns ``(ok, payload)``. On success the payload carries the ``token``, the
+        loopback ``port`` our own forward listens on, which is the hop the hub
+        forwards to, and the ``ttl`` the token was issued under -- OUR record's TTL
+        for this crew, which the hub cannot know and must not assume: its own row
+        for the crew defaults to 20h, and scheduling a refresh from that would put
+        the refresh after a shorter token has already expired. On failure it carries
+        ``error`` / ``code`` plus the HTTP ``status`` the route should answer with,
+        so the handler translates without string-matching.
         """
         inst = await asyncio.to_thread(self._registry.get, instance_id)
         if inst is None:
@@ -2288,7 +2334,7 @@ class SshTunnelManager:
                 "code": "instance_mint_failed",
                 "status": 502,
             }
-        return True, {"token": token, "port": int(st.local_port)}
+        return True, {"token": token, "port": int(st.local_port), "ttl": inst.ttl}
 
     async def _mint_token_with_parent_port(
         self, inst: Instance, params: _TransportParams, embed_parent_port: int
@@ -2599,7 +2645,7 @@ class SshTunnelManager:
                     await tunnel.stop()
                     self._tunnels.pop(instance_id, None)
                     return self._error_status(inst, f"token mint failed: {e}")
-                self._store_token(instance_id, token, inst.ttl)
+                self._store_token(instance_id, token, self._minted_ttl(inst))
                 self._schedule_token_refresh(instance_id)
 
             # Persist hints: the forwarder identity record built by
@@ -2695,6 +2741,7 @@ class SshTunnelManager:
             await tunnel.stop()
         self._tunnels.pop(instance_id, None)
         self._tokens.pop(instance_id, None)
+        self._chained_ttl.pop(instance_id, None)
         self._recover_attempts.pop(instance_id, None)
         self._last_error.pop(instance_id, None)
         # A teardown ends the generation: a slow unlocked mint or rebuild in
@@ -3145,7 +3192,7 @@ class SshTunnelManager:
                     # install sitting between the capture and the compare.
                     logger.info("Discarding a superseded self-heal mint for %s", instance_id)
                     return
-                self._store_token(instance_id, token, inst.ttl)
+                self._store_token(instance_id, token, self._minted_ttl(inst))
                 self._schedule_token_refresh(instance_id)
         try:
             rebuilt = await self._rebuild(inst, params, local_port, expected_epoch=epoch + 1)
@@ -4042,7 +4089,7 @@ class SshTunnelManager:
                 # leaked log line is not worth a suppression comment.
                 logger.info("Discarding a superseded mint for %s", instance_id)
                 return False
-            self._store_token(instance_id, token, inst.ttl)
+            self._store_token(instance_id, token, self._minted_ttl(inst))
         logger.info("Proactively refreshed token for %s", instance_id)  # no token in logs
         return True
 

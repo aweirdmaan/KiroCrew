@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { InstanceView } from '../api/client'
 import { chainRows } from '../components/InstanceTabBar'
-import { announceChainedCrew, CHAINED_CREW_MESSAGE } from '../lib/chainAnnounce'
+import {
+  announceChainedCrew,
+  CHAINED_CREW_MESSAGE,
+  CHAINED_HOST_MAX,
+  CHAINED_NAME_MAX,
+  readChainedCrewNotice,
+} from '../lib/chainAnnounce'
 
 /** Minimal InstanceView; only the fields the chain rules read matter. */
 function inst(id: string, extra: Partial<InstanceView> = {}): InstanceView {
@@ -27,6 +33,49 @@ function inst(id: string, extra: Partial<InstanceView> = {}): InstanceView {
 function chained(id: string, parent: string, extra: Partial<InstanceView> = {}): InstanceView {
   return inst(id, { via_instance_id: parent, via_remote_port: 53999, ...extra })
 }
+
+describe('readChainedCrewNotice', () => {
+  const good = { id: 'c-2', name: 'C', sshHost: 'c-host', remotePort: 5476, port: 53999 }
+
+  it('keeps the announcing gateway\u2019s own id for the crew', () => {
+    // This id is the whole point of the notice: the parent mints the token and
+    // looks the crew up by ITS id, so an id derived on the host side equals it
+    // only by luck and the parent then answers 404 for a crew it holds.
+    expect(readChainedCrewNotice(good)?.id).toBe('c-2')
+  })
+
+  it('drops a notice with no id rather than adopting one we would have to invent', () => {
+    const { id: _dropped, ...noId } = good
+    expect(readChainedCrewNotice(noId)).toBeNull()
+  })
+
+  it('drops an id outside the registry grammar', () => {
+    // It ends up in a request path on the announcing gateway, so a path-shaped
+    // id would address a different route there.
+    expect(readChainedCrewNotice({ ...good, id: 'victim/disconnect?x=' })).toBeNull()
+    expect(readChainedCrewNotice({ ...good, id: 'C-2' })).toBeNull()
+    expect(readChainedCrewNotice({ ...good, id: '-leading' })).toBeNull()
+  })
+
+  it('refuses a hop port outside the range but tolerates an unusable remote port', () => {
+    // The hop port is dialled, so a bad one is fatal. The crew's own gateway port
+    // is only a record here, so the row is still usable without it.
+    expect(readChainedCrewNotice({ ...good, port: 0 })).toBeNull()
+    expect(readChainedCrewNotice({ ...good, port: 70000 })).toBeNull()
+    expect(readChainedCrewNotice({ ...good, remotePort: 999999 })?.remotePort).toBe(0)
+  })
+
+  it('caps the two free-text fields instead of trusting their length', () => {
+    const long = readChainedCrewNotice({ ...good, name: 'n'.repeat(500), sshHost: 'h'.repeat(500) })
+    expect(long?.name).toHaveLength(CHAINED_NAME_MAX)
+    expect(long?.sshHost).toHaveLength(CHAINED_HOST_MAX)
+  })
+
+  it('drops a notice that is not an object at all', () => {
+    expect(readChainedCrewNotice(null)).toBeNull()
+    expect(readChainedCrewNotice('mc-instance-ready')).toBeNull()
+  })
+})
 
 describe('chainRows', () => {
   it('puts each crew before the crews reached through it, and records the depth', () => {
