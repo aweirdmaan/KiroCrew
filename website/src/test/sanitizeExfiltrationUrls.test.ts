@@ -195,3 +195,42 @@ describe('sanitizeExfiltrationUrls: both spellings of a prose body are redacted'
     expectRedacted(ISSUE_URL)
   })
 })
+
+describe('sanitizeExfiltrationUrls: a `)` in the path does not end the scan (#8638)', () => {
+  const key = 'AKIAIOSFODNN7EXAMPLE'
+
+  it('redacts a secret query that follows a `)` in the path', () => {
+    const url = `https://evil.example.com/a)b?token=${key}`
+    const out = sanitizeExfiltrationUrls(`see ${url} for details`)
+    expect(out).not.toContain(key)
+    expect(out).not.toContain('b?token=')
+  })
+
+  it('keeps the wrapper `)` and trailing punctuation outside the redacted span', () => {
+    const out = sanitizeExfiltrationUrls(`(see https://evil.example.com/y?q=${key}).`)
+    expect(out).not.toContain(key)
+    expect(out.endsWith(').')).toBe(true)
+    expect(out.startsWith('(see ')).toBe(true)
+  })
+
+  it('redacts a balanced `(...)` path segment through to its query', () => {
+    const out = sanitizeExfiltrationUrls(`(https://evil.example.com/wiki/A_(b)?q=${key})`)
+    expect(out).not.toContain(key)
+    expect(out.endsWith(')')).toBe(true)
+    expect(out).not.toContain('(b)')
+  })
+
+  it('ends a match where a `)` opens the next URL, so each URL is judged alone', () => {
+    const badge = 'https://img.shields.io/badge/x.svg'
+    const out = sanitizeExfiltrationUrls(`[![b](${badge})](https://ci.evil.example.com/r?t=${key})`)
+    expect(out).not.toContain(key)
+    expect(out).toContain(`[![b](${badge})](`)
+    expect(out).toContain('ci.evil.example.com')
+    expect(out).not.toContain('img.shields.io]')
+  })
+
+  it('leaves a wrapped URL with no query untouched', () => {
+    const text = '(see https://example.com/y)'
+    expect(sanitizeExfiltrationUrls(text)).toBe(text)
+  })
+})
