@@ -1959,10 +1959,12 @@ RUNNER_FORMS = {
     "versioned-interpreter-module": ["python3.12", "-m", "pytest"],
     "venv-abspath": ["/wt/.venv/bin/pytest"],
     "py.test": ["py.test"],
+    "pytest.exe": ["pytest.exe"],
     "alias": ["pytest-3"],
     "alias-minor": ["pytest-3.12"],
     "alias-abspath": ["/usr/bin/pytest-3"],
     "alias-py.test": ["py.test-3"],
+    "alias-module": ["python3", "-m", "pytest-3"],
     "alias-behind-launcher": ["timeout", "900", "pytest-3"],
     "alias-behind-launcher-with-own-flag": ["nice", "-n", "10", "pytest-3"],
 }
@@ -2175,3 +2177,202 @@ def test_the_alias_pattern_admits_a_version_and_nothing_else(mod, base, is_alias
     would not save a token that reached it at index 0.
     """
     assert bool(mod._ALIAS_RUNNER_BASE_RE.match(base)) is is_alias
+
+
+# Every spelling of the interpreter, so the module-position rule is pinned as a property
+# of the python family rather than of one token.
+PYTHON_SPELLINGS = {
+    "python": ["python"],
+    "python3": ["python3"],
+    "python3.12": ["python3.12"],
+    "python-abspath": ["/wt/.venv/bin/python3"],
+    "python-with-own-flag": ["python3", "-u"],
+}
+
+# What an interpreter is given when the thing it runs is a SCRIPT. In each one the alias
+# is an argument to that script, so it names no program.
+#
+# The tails are split deliberately. A script whose name carries a program suffix is also
+# caught by the suffix rule, so those cases alone cannot show the interpreter rule doing
+# any work -- a mutation removing it stays green. The suffixless tails are the ones that
+# isolate it: nothing but "an interpreter's first non-option operand is the script"
+# separates them from an invocation.
+INTERPRETER_SCRIPT_TAILS = {
+    "script-then-alias": ["worker.py", "pytest-3"],
+    "script-then-alias-path": ["cleanup.py", "/var/tmp/pytest-of-ci/pytest-3"],
+    "script-then-py.test": ["worker.py", "py.test"],
+    "script-then-alias-among-args": ["runner.py", "--target", "pytest-3", "test/"],
+    "dashless-script-then-alias": ["tools/sweep.py", "pytest-3.12"],
+    "suffixless-script-then-alias": ["worker", "pytest-3"],
+    "suffixless-script-then-py.test": ["harness", "py.test"],
+    "suffixless-script-then-alias-path": ["sweep", "/var/tmp/pytest-of-ci/pytest-3"],
+    "inline-code-then-alias": ["-c", "import sys; print(sys.argv)", "pytest-3"],
+    "subcommand-shaped-operand-then-alias": ["run", "pytest-3"],
+}
+
+# A bare token carrying a program suffix is the subject of the command, whatever
+# launcher opened it: the runner spelling behind it is that program's argument.
+SCRIPT_SUFFIX_OPERANDS = {
+    "py": "worker.py",
+    "sh": "teardown.sh",
+    "bash": "wrap.bash",
+    "js": "runner.js",
+    "mjs": "runner.mjs",
+    "cjs": "runner.cjs",
+    "ts": "harness.ts",
+    "rb": "sweep.rb",
+    "pl": "legacy.pl",
+}
+
+
+@pytest.mark.parametrize("python", sorted(PYTHON_SPELLINGS))
+@pytest.mark.parametrize("tail", sorted(INTERPRETER_SCRIPT_TAILS))
+def test_an_interpreter_running_a_script_never_reports_an_alias_in_its_arguments(
+    mod, tmp_path, monkeypatch, python, tail
+):
+    """An interpreter's first non-option operand is the script, and it ends the walk.
+
+    ``python3 worker.py pytest-3`` runs ``worker.py``; the alias is a string that script
+    was handed. Nothing unusual is needed to produce this shape -- no custom config, no
+    timing -- so admitting it draws a stop against a worker doing compliant work, which
+    is the direction that destroys a turn.
+    """
+    root = host_proc(tmp_path, monkeypatch)
+    fleet = tmp_path / "wt"
+    fleet.mkdir()
+    argv = [*PYTHON_SPELLINGS[python], *INTERPRETER_SCRIPT_TAILS[tail]]
+    fleet_pid(root, fleet, "420", argv)
+    assert (
+        banned_pids(mod, root, fleet) == set()
+    ), f"{python} + {tail} was reported, but the program is the script, not the alias"
+
+
+@pytest.mark.parametrize("python", sorted(PYTHON_SPELLINGS))
+@pytest.mark.parametrize("runner", ["pytest-3", "pytest-3.12", "py.test-3", "py.test"])
+def test_an_interpreter_reports_the_runner_in_the_module_position(
+    mod, tmp_path, monkeypatch, python, runner
+):
+    """``-m`` is the one interpreter position that names the runner as the program.
+
+    The other direction of the same rule: tightening the script case must not cost the
+    module case, which is how an uncapped alias run behind an interpreter is seen at all.
+    """
+    root = host_proc(tmp_path, monkeypatch)
+    fleet = tmp_path / "wt"
+    fleet.mkdir()
+    fleet_pid(root, fleet, "421", [*PYTHON_SPELLINGS[python], "-m", runner, "test/"])
+    assert banned_pids(mod, root, fleet) == {
+        "421"
+    }, f"{python} -m {runner} went unreported while uncapped"
+
+
+@pytest.mark.parametrize("launcher", [["coverage", "run"], ["timeout", "900"], ["nice", "-n", "5"]])
+@pytest.mark.parametrize("suffix", sorted(SCRIPT_SUFFIX_OPERANDS))
+def test_a_program_suffixed_operand_ends_the_program_position(
+    mod, tmp_path, monkeypatch, launcher, suffix
+):
+    """A launcher's operand that is plainly a program is the subject of the command.
+
+    ``coverage run worker.py pytest-3`` measures ``worker.py``. The runner spelling after
+    it is an argument, and a launcher this script recognises must not turn it back into
+    an invocation.
+    """
+    root = host_proc(tmp_path, monkeypatch)
+    fleet = tmp_path / "wt"
+    fleet.mkdir()
+    argv = [*launcher, SCRIPT_SUFFIX_OPERANDS[suffix], "pytest-3"]
+    fleet_pid(root, fleet, "422", argv)
+    assert (
+        banned_pids(mod, root, fleet) == set()
+    ), f"{launcher[0]} + .{suffix} operand was reported, but the operand is the program"
+
+
+def test_a_custom_rule_list_does_not_switch_off_the_argv_shape(mod, tmp_path, monkeypatch):
+    """Rule ORIGIN carries built-in authority, not the absence of custom config.
+
+    ``test_pipeline_conductor_agent.py`` already writes this down for the wrapper
+    exemption: the gate is written against the rule that MATCHED rather than against
+    ``cfg["banned_process_res"]`` being set at all. Standing the argv shape down whenever
+    an operator supplies a list would let a config EDIT switch a built-in protection off,
+    which is a worse property than one extra line on a replaced policy -- and the line it
+    emits is factually true of the process, an uncapped alias run in a fleet worktree.
+    """
+    root = host_proc(tmp_path, monkeypatch)
+    fleet = tmp_path / "wt"
+    fleet.mkdir()
+    fleet_pid(root, fleet, "430", ["pytest-3", "test/"])
+    custom, _host = mod._host_lines(
+        {"fleet_worktrees": [str(fleet)], "banned_process_res": [r"\bnpm\b\s+audit"]}
+    )
+    reported = {
+        line.split()[1].split("=", 1)[1] for line in custom if line.startswith("BANNED pid=")
+    }
+    assert reported == {"430"}, "a custom rule list silenced the argv shape"
+    # The same pid under the defaults, so the assertion above is about authority rather
+    # than about the fixture happening to report everything.
+    assert banned_pids(mod, root, fleet) == {"430"}
+
+
+def test_a_custom_rule_list_still_reports_its_own_shape(mod, tmp_path, monkeypatch):
+    """The operator's own rules keep working alongside the built-in shape.
+
+    The two authorities are additive in effect even though the config REPLACES the
+    pattern list: a custom rule reports what it names, and the argv shape reports what
+    this file detects on its own authority.
+    """
+    root = host_proc(tmp_path, monkeypatch)
+    fleet = tmp_path / "wt"
+    fleet.mkdir()
+    fleet_pid(root, fleet, "431", ["npm", "audit", "--json"])
+    lines, _host = mod._host_lines(
+        {"fleet_worktrees": [str(fleet)], "banned_process_res": [r"\bnpm\b\s+audit"]}
+    )
+    reported = {
+        line.split()[1].split("=", 1)[1] for line in lines if line.startswith("BANNED pid=")
+    }
+    assert reported == {"431"}
+
+
+@pytest.mark.parametrize(
+    ("argv", "program"),
+    [
+        pytest.param(["pytest-3", "test/"], "pytest-3", id="alias"),
+        pytest.param(["pytest-3.12", "test/"], "pytest-3.12", id="alias-minor"),
+        pytest.param(["/usr/bin/pytest-3", "test/"], "pytest-3", id="alias-abspath"),
+        pytest.param(["py.test-3", "test/"], "py.test-3", id="alias-py.test"),
+        pytest.param(["py.test", "test/"], "py.test", id="py.test"),
+        pytest.param(["pytest.exe", "test/"], "pytest.exe", id="pytest.exe"),
+    ],
+)
+def test_an_argv_row_prints_the_program_it_fired_on(mod, tmp_path, monkeypatch, argv, program):
+    """``cmd=`` names the runner on an argv row, because ``rule=`` cannot.
+
+    A joined-line row can be judged from its rule text. An argv row names a shape rather
+    than a pattern, so the program name is the only field that separates a real uncapped
+    run from a command that merely spells one -- and it is the field the owning skill
+    says to read before stopping anyone.
+    """
+    root = host_proc(tmp_path, monkeypatch)
+    fleet = tmp_path / "wt"
+    fleet.mkdir()
+    fleet_pid(root, fleet, "440", argv)
+    lines, _host = mod._host_lines({"fleet_worktrees": [str(fleet)]})
+    assert len(lines) == 1
+    cmd = lines[0].split("cmd=", 1)[1].split()[0]
+    assert cmd.split(",")[0] == program, f"cmd= withheld the program name: {cmd}"
+
+
+def test_vitest_is_left_to_its_own_rule_rather_than_a_pytest_cap_check(mod):
+    """``vitest.cmd`` is a runner base and is deliberately not an argv-only shape.
+
+    Its rule spells an uncapped run as ``vitest run`` with nothing following, not as a
+    missing ``-n``. Admitting it here would route it through the pytest cap grammar,
+    where a bounded vitest run carries no ``-n`` and would be reported as unbounded.
+    """
+    assert "vitest.cmd" in mod._RUNNER_BASES
+    assert "vitest.cmd" not in mod._ARGV_ONLY_RUNNER_BASES
+    assert not mod._ALIAS_RUNNER_BASE_RE.match("vitest.cmd")
+    # The two spellings whose dot defeats the rule's token boundary ARE admitted, which
+    # is the asymmetry this assertion fixes in place: the reason is the cap grammar, not
+    # the spelling.
+    assert {"py.test", "pytest.exe"} <= mod._ARGV_ONLY_RUNNER_BASES
