@@ -369,10 +369,14 @@ async def api_taskrunner_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc), "code": exc.code}, status=503)
     # The run is gone from task_runner._runs now, so its stream history has
     # nothing left to describe - drop the buffer and stop its producer (a
-    # no-op if it already finished) rather than let it linger in memory.
+    # no-op if it already finished), and delete the on-disk log too, rather
+    # than let either linger past the run they describe.
     stream_state = _stream_states.pop(task_id, None)
-    if stream_state is not None and stream_state.producer_task and not stream_state.producer_task.done():
-        stream_state.producer_task.cancel()
+    if stream_state is not None:
+        if stream_state.producer_task and not stream_state.producer_task.done():
+            stream_state.producer_task.cancel()
+        if stream_state.log_path is not None:
+            stream_state.log_path.unlink(missing_ok=True)
     return web.json_response({"ok": True})
 
 
@@ -1072,16 +1076,84 @@ _STREAM_POLL_INTERVAL_S = 0.3
 _STREAM_BUFFER_MAX_FRAMES = 4000
 
 
+_STREAM_LOG_SUBDIR = "streams"
+
+
+def _stream_log_path(state: DashboardState, task_id: str) -> Path | None:
+    """Where a run's stream frames are durably logged, or None if the task
+    runner has no resolvable work dir (e.g. a test double) to anchor under.
+
+    Lives beside runs.json (TaskRunner._runs_path()) on purpose: same
+    directory, same "durable local state for this install" meaning, just one
+    file per run instead of one shared file, since a stream log is append-only
+    and runs.json is a whole-registry snapshot.
+    """
+    work_dir = getattr(state.task_runner, "_work_dir", None)
+    # Deliberately isinstance-checked, not just truthy: a test double
+    # (MagicMock()) answers getattr(..., "_work_dir", None) with ANOTHER
+    # auto-created Mock rather than None, which is truthy and stringifies
+    # into a path segment like "<MagicMock id=...>" - str()'d into a real
+    # Path, that silently writes stream logs into the process's actual CWD
+    # instead of nowhere. A str/Path is the only shape a real TaskRunner ever
+    # has here (see TaskRunner.__init__state.task_runner._work_dir).
+    if not isinstance(work_dir, (str, Path)):
+        return None
+    # task_id is server-generated (timestamp-suffixed, never user path input),
+    # but a defensive sep-stripping keeps a hostile task_id from escaping the
+    # streams/ directory even so.
+    safe_id = re.sub(r"[\\/]", "_", task_id)
+    return Path(work_dir) / _STREAM_LOG_SUBDIR / f"{safe_id}.jsonl"
+
+
+def _load_stream_log(path: Path) -> list[dict]:
+    """Read a run's full on-disk frame history. Best-effort: a missing file is
+    the normal case (no prior run, or a fresh install), and a torn last line
+    (process killed mid-append) is tolerated rather than failing the read -
+    everything before it is still a valid prefix of the real history."""
+    frames: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    frames.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return []
+    except OSError:
+        logger.debug("failed to read stream log %s", path, exc_info=True)
+        return []
+    return frames
+
+
+def _append_stream_log(path: Path | None, frame: dict) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(frame))
+            f.write("\n")
+    except OSError:
+        logger.debug("failed to append stream log frame to %s", path, exc_info=True)
+
+
 class _TaskStreamState:
     """Per-run SSE state, shared by every connection to that run's stream.
 
     One background producer task per run polls task_runner.status() and
-    appends frames to `buffer` (a capped deque of (seq, frame) pairs); every
-    HTTP connection is a read-only consumer that replays `buffer` from seq 0
-    and then tails new frames as they arrive. This is what makes the live log
-    survive a reload or a second tab: frames are never written to only one
-    response stream, they live here for as long as the run itself stays in
-    task_runner._runs (api_taskrunner_delete evicts this entry on delete).
+    appends frames to `buffer` (a capped deque of (seq, frame) pairs) AND to
+    `log_path` on disk (unbounded - the memory cap exists to bound a live
+    process's RAM, the disk copy is the actual durable record); every HTTP
+    connection is a read-only consumer that replays `buffer` from seq 0 and
+    then tails new frames as they arrive. This is what makes the live log
+    survive a reload, a second tab, or a gateway RESTART: frames are never
+    written to only one response stream or only to in-memory state, they live
+    on disk for as long as the run itself stays in task_runner._runs
+    (api_taskrunner_delete evicts this entry, and the file, on delete).
     """
 
     __slots__ = (
@@ -1093,9 +1165,10 @@ class _TaskStreamState:
         "last_step_status",
         "sent_result_for",
         "sent_progress_len",
+        "log_path",
     )
 
-    def __init__(self) -> None:
+    def __init__(self, log_path: Path | None) -> None:
         self.buffer: deque[tuple[int, dict]] = deque(maxlen=_STREAM_BUFFER_MAX_FRAMES)
         self.next_seq = 0
         self.producer_task: asyncio.Task | None = None
@@ -1104,27 +1177,70 @@ class _TaskStreamState:
         self.last_step_status: dict[int, str] = {}
         self.sent_result_for: set[int] = set()
         self.sent_progress_len: dict[int, int] = {}
+        self.log_path = log_path
 
     def append(self, frame: dict) -> None:
         self.buffer.append((self.next_seq, frame))
         self.next_seq += 1
+        _append_stream_log(self.log_path, frame)
+
+    def load_from_disk(self) -> None:
+        """Preload `buffer` and the dedup bookkeeping from `log_path`, for a
+        _TaskStreamState created fresh after a gateway restart (or the very
+        first connection ever) rather than one still live from an earlier
+        connection in this same process."""
+        if self.log_path is None:
+            return
+        frames = _load_stream_log(self.log_path)
+        if not frames:
+            return
+        # The deque's own maxlen already keeps only the newest
+        # _STREAM_BUFFER_MAX_FRAMES for in-memory replay; next_seq must still
+        # count every frame ever written so a resumed producer's new seqs
+        # never collide with ones already on disk.
+        for seq, frame in enumerate(frames):
+            self.buffer.append((seq, frame))
+        self.next_seq = len(frames)
+        for frame in frames:
+            t = frame.get("type")
+            idx = frame.get("index")
+            if t == "run":
+                self.last_run_status = frame.get("status")
+            elif t == "step" and idx is not None:
+                self.last_step_status[idx] = frame.get("status")
+            elif t == "progress" and idx is not None:
+                self.sent_progress_len[idx] = self.sent_progress_len.get(idx, 0) + len(
+                    frame.get("text") or ""
+                )
+            elif t == "result" and idx is not None:
+                self.sent_result_for.add(idx)
+            elif t == "ended":
+                self.done = True
 
 
 # task_id -> _TaskStreamState, for the lifetime of that run's entry in
 # task_runner._runs. Module-level and process-lifetime by design: this is
 # what lets a reloaded tab, or a second tab, replay a run's full stream
 # history instead of only ever seeing frames from the one connection that
-# happened to be open when they were produced.
+# happened to be open when they were produced. The on-disk log underneath it
+# (see _TaskStreamState.log_path) is what makes that survive this dict itself
+# being wiped by a gateway restart.
 _stream_states: dict[str, _TaskStreamState] = {}
 
 
 async def _produce_taskrunner_stream(state: DashboardState, task_id: str, st: _TaskStreamState) -> None:
     """Background task: the ONLY thing that calls task_runner.status() for
-    this run and appends new frames to `st.buffer`. api_taskrunner_stream
-    spawns exactly one of these per task_id, lazily, on the first connection,
-    and never a second one while st.producer_task is still alive - every
-    later connection for the same run is a pure consumer of `st.buffer`.
+    this run and appends new frames to `st.buffer`/`st.log_path`.
+    api_taskrunner_stream spawns exactly one of these per task_id, lazily, on
+    the first connection, and never a second one while st.producer_task is
+    still alive - every later connection for the same run is a pure consumer
+    of `st.buffer`.
     """
+    if st.done:
+        # Loaded from disk already terminal (the run finished before this
+        # process even started, e.g. right after a restart) - nothing left to
+        # produce, every connection just replays st.buffer.
+        return
     try:
         while True:
             if task_id not in state.task_runner._runs:
@@ -1200,7 +1316,8 @@ async def _produce_taskrunner_stream(state: DashboardState, task_id: str, st: _T
 def _get_or_start_stream_producer(state: DashboardState, task_id: str) -> _TaskStreamState:
     st = _stream_states.get(task_id)
     if st is None:
-        st = _TaskStreamState()
+        st = _TaskStreamState(_stream_log_path(state, task_id))
+        st.load_from_disk()
         _stream_states[task_id] = st
     if not st.done and (st.producer_task is None or st.producer_task.done()):
         st.producer_task = asyncio.create_task(_produce_taskrunner_stream(state, task_id, st))
@@ -1220,11 +1337,13 @@ async def api_taskrunner_stream(request: web.Request) -> web.StreamResponse:
 
     The actual polling happens in a single per-run background producer
     (`_produce_taskrunner_stream`), shared by every connection to this
-    task_id: this handler just replays that run's buffered history (capped at
-    `_STREAM_BUFFER_MAX_FRAMES`) and then tails whatever the producer appends
-    next. That is what lets a reloaded page, or a second tab, pick the stream
-    up from the beginning instead of only ever seeing frames emitted while
-    that one connection happened to be open. Ends once the run has reached a
+    task_id: this handler just replays that run's buffered history (capped in
+    memory at `_STREAM_BUFFER_MAX_FRAMES`, kept in full on disk at
+    `_stream_log_path`) and then tails whatever the producer appends next.
+    That is what lets a reloaded page, a second tab, or a connection made
+    after a gateway RESTART pick the stream up from the beginning instead of
+    only ever seeing frames emitted while that one connection - or that one
+    process lifetime - happened to be open. Ends once the run has reached a
     terminal status, its final frame has been replayed, and nothing further
     will ever be appended - or when the client disconnects.
 

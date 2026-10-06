@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import web
@@ -332,3 +332,90 @@ async def test_two_concurrent_connections_each_see_every_frame():
     # not have caused task_runner.status() to be polled through its own
     # independent loop on top of the first's.
     assert runner.status.call_count <= 10
+
+
+@pytest.mark.asyncio
+async def test_survives_a_simulated_gateway_restart(tmp_path):
+    # _stream_states.clear() mid-run (done via taskrunner_handlers directly,
+    # not the fixture) is what simulates the process restarting: it wipes the
+    # in-memory cache a real restart would also wipe, while the on-disk log
+    # under tmp_path - standing in for the real TaskRunner._work_dir - is
+    # exactly what a real restart leaves behind.
+    runner = MagicMock()
+    runner._runs = {"t1": MagicMock()}
+    runner._work_dir = str(tmp_path)
+    snapshot = {
+        "runs": [
+            {
+                "task_id": "t1",
+                "status": "completed",
+                "running": False,
+                "completed": 1,
+                "tasks": 1,
+                "task_details": [
+                    {"index": 1, "title": "Step one", "status": "passed", "result": "all good"}
+                ],
+            }
+        ]
+    }
+    runner.status.side_effect = [snapshot] * 10
+    state = SimpleNamespace(task_runner=runner)
+    app = _make_app(state)
+    async with TestClient(TestServer(app)) as client:
+        first = await client.get("/api/taskrunner/t1/stream")
+        first_frames = _parse_frames(await first.read())
+
+    log_path = tmp_path / "streams" / "t1.jsonl"
+    assert log_path.exists()
+
+    # Simulate the restart: wipe every in-process trace, but leave the file.
+    taskrunner_handlers._stream_states.clear()
+
+    async with TestClient(TestServer(app)) as client:
+        second = await client.get("/api/taskrunner/t1/stream")
+        second_frames = _parse_frames(await second.read())
+
+    assert second_frames == first_frames
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_run_removes_its_on_disk_log(tmp_path):
+    from kiro_crew.dashboard.handlers import api_taskrunner_delete
+
+    runner = MagicMock()
+    runner._runs = {"t1": MagicMock(status="completed")}
+    runner._work_dir = str(tmp_path)
+    runner.delete_run = AsyncMock(return_value=True)
+    snapshot = {
+        "runs": [
+            {
+                "task_id": "t1",
+                "status": "completed",
+                "running": False,
+                "completed": 1,
+                "tasks": 1,
+                "task_details": [
+                    {"index": 1, "title": "Step one", "status": "passed", "result": "all good"}
+                ],
+            }
+        ]
+    }
+    runner.status.side_effect = [snapshot] * 10
+    state = SimpleNamespace(task_runner=runner)
+    app = _make_app(state)
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/api/taskrunner/t1/stream")
+        await resp.read()
+
+    log_path = tmp_path / "streams" / "t1.jsonl"
+    assert log_path.exists()
+
+    delete_app = web.Application()
+    delete_app.router.add_delete("/api/taskrunner/{task_id}", api_taskrunner_delete)
+    delete_app["state"] = state
+    async with TestClient(TestServer(delete_app)) as client:
+        del_resp = await client.delete("/api/taskrunner/t1")
+        assert del_resp.status == 200
+
+    assert not log_path.exists()
+    assert "t1" not in taskrunner_handlers._stream_states
