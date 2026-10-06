@@ -5229,6 +5229,36 @@
         "drive_bucket_label": "存储桶",
         "stat_spend_scope": "此账户的 AWS 账单"
       }
+    },
+    "board": {
+      "title": "看板",
+      "backlog_column": "待办",
+      "no_stories": "暂无故事",
+      "no_projects_configured": "未配置 beads 项目路径。设置 knowledge.beads_project_paths 以在此查看故事。",
+      "run_next_job": "运行下一个任务",
+      "mark_reviewed_done": "标记为已审核 → 完成",
+      "status_running": "运行中",
+      "status_needs_attention": "需要关注",
+      "status_failed": "失败",
+      "timeline_title": "时间线",
+      "no_history_yet": "暂无历史记录",
+      "manifest": {
+        "display_name": "看板",
+        "description": "将 beads 故事推进通过 9 列流水线（Grooming → 规划 → 计划评审 → 批准 → 实施 → 验证 → PR → 评审 → 完成）。每个任务均由 crew-rocket 的一个技能执行，并配有实时日志和故事时间线。通过 knowledge.beads_project_paths 配置项目。",
+        "page_label": "看板",
+        "use_case_1": "无需离开仪表盘，即可让 beads 故事依次经过整理、规划、实施、验证、PR 和评审。",
+        "use_case_2": "在看板上查看每个故事的当前阶段，并在时间线中查看其完整的任务运行历史（包含实时日志）。"
+      },
+      "description_title": "描述",
+      "no_description": "无描述",
+      "comments_title": "评论 ({{count}})",
+      "comment_write": "编写",
+      "comment_preview": "预览",
+      "comment_placeholder": "写评论…支持 Markdown。",
+      "comment_nothing_to_preview": "暂无可预览内容",
+      "comment_submit": "评论",
+      "task_count_one": "{{count}} 个任务",
+      "task_count_other": "{{count}} 个任务"
     }
   },
   "autoImprovement": {

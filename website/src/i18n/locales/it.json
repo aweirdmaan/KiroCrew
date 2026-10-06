@@ -5409,6 +5409,36 @@
         "drive_bucket_label": "Bucket",
         "stat_spend_scope": "Fattura AWS di questo account"
       }
+    },
+    "board": {
+      "title": "Bacheca",
+      "backlog_column": "Arretrato",
+      "no_stories": "Nessuna storia",
+      "no_projects_configured": "Nessun percorso di progetto beads configurato. Imposta knowledge.beads_project_paths per vedere le storie qui.",
+      "run_next_job": "Esegui il prossimo job",
+      "mark_reviewed_done": "Segna come revisionato → Fatto",
+      "status_running": "In esecuzione",
+      "status_needs_attention": "Richiede attenzione",
+      "status_failed": "Fallito",
+      "timeline_title": "Cronologia",
+      "no_history_yet": "Ancora nessuna cronologia",
+      "manifest": {
+        "display_name": "Bacheca",
+        "description": "Sposta una storia beads attraverso una pipeline a 9 colonne (Grooming → Pianificazione → Revisione piano → Approvazione → Implementazione → Verifica → PR → Revisione → Fatto), una skill crew-rocket per job, con log in tempo reale e una cronologia per storia. Configura i progetti tramite knowledge.beads_project_paths.",
+        "page_label": "Bacheca",
+        "use_case_1": "Esegui una storia beads attraverso grooming, pianificazione, implementazione, verifica, PR e revisione senza lasciare la dashboard.",
+        "use_case_2": "Vedi la fase attuale di ogni storia su una bacheca, e l'intera cronologia dei job (con log in tempo reale) in una timeline."
+      },
+      "description_title": "Descrizione",
+      "no_description": "Nessuna descrizione",
+      "comments_title": "Commenti ({{count}})",
+      "comment_write": "Scrivi",
+      "comment_preview": "Anteprima",
+      "comment_placeholder": "Scrivi un commento… Markdown supportato.",
+      "comment_nothing_to_preview": "Ancora niente da visualizzare in anteprima",
+      "comment_submit": "Commenta",
+      "task_count_one": "{{count}} task",
+      "task_count_other": "{{count}} task"
     }
   },
   "autoImprovement": {

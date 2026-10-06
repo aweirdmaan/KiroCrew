@@ -5409,6 +5409,36 @@
         "drive_bucket_label": "Bucket",
         "stat_spend_scope": "Factura de AWS de esta cuenta"
       }
+    },
+    "board": {
+      "title": "Tablero",
+      "backlog_column": "Pendientes",
+      "no_stories": "Sin historias",
+      "no_projects_configured": "No hay rutas de proyecto beads configuradas. Define knowledge.beads_project_paths para ver historias aquí.",
+      "run_next_job": "Ejecutar siguiente tarea",
+      "mark_reviewed_done": "Marcar revisado → Hecho",
+      "status_running": "En ejecución",
+      "status_needs_attention": "Necesita atención",
+      "status_failed": "Fallido",
+      "timeline_title": "Cronología",
+      "no_history_yet": "Aún no hay historial",
+      "manifest": {
+        "display_name": "Tablero",
+        "description": "Mueve una historia de beads a través de una tubería de 9 columnas (Grooming → Planificación → Revisión del plan → Aprobación → Implementación → Verificación → PR → Revisión → Hecho), una habilidad crew-rocket por tarea, con registro en vivo y una línea de tiempo por historia. Configura los proyectos mediante knowledge.beads_project_paths.",
+        "page_label": "Tablero",
+        "use_case_1": "Ejecuta una historia de beads a través de grooming, planificación, implementación, verificación, PR y revisión sin salir del panel.",
+        "use_case_2": "Ve la fase actual de cada historia en un tablero, y todo su historial de ejecuciones (con registros en vivo) en una línea de tiempo."
+      },
+      "description_title": "Descripción",
+      "no_description": "Sin descripción",
+      "comments_title": "Comentarios ({{count}})",
+      "comment_write": "Escribir",
+      "comment_preview": "Vista previa",
+      "comment_placeholder": "Escribe un comentario… Se admite Markdown.",
+      "comment_nothing_to_preview": "Nada que previsualizar todavía",
+      "comment_submit": "Comentar",
+      "task_count_one": "{{count}} tarea",
+      "task_count_other": "{{count}} tareas"
     }
   },
   "autoImprovement": {

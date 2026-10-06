@@ -5319,6 +5319,36 @@
         "drive_bucket_label": "Bucket",
         "stat_spend_scope": "AWS-Rechnung dieses Kontos"
       }
+    },
+    "board": {
+      "title": "Board",
+      "backlog_column": "Rückstand",
+      "no_stories": "Keine Storys",
+      "no_projects_configured": "Keine Beads-Projektpfade konfiguriert. Setze knowledge.beads_project_paths, um Storys hier zu sehen.",
+      "run_next_job": "Nächsten Job ausführen",
+      "mark_reviewed_done": "Als geprüft markieren → Erledigt",
+      "status_running": "Läuft",
+      "status_needs_attention": "Braucht Aufmerksamkeit",
+      "status_failed": "Fehlgeschlagen",
+      "timeline_title": "Zeitleiste",
+      "no_history_yet": "Noch keine Historie",
+      "manifest": {
+        "display_name": "Board",
+        "description": "Bewegt eine Beads-Story durch eine 9-spaltige Pipeline (Grooming → Planung → Planprüfung → Freigabe → Umsetzung → Verifikation → PR → Review → Fertig), ein crew-rocket-Skill pro Job, mit Live-Log und einer Story-Zeitleiste. Projekte über knowledge.beads_project_paths konfigurieren.",
+        "page_label": "Board",
+        "use_case_1": "Führe eine Beads-Story durch Grooming, Planung, Umsetzung, Verifikation, PR und Review, ohne das Dashboard zu verlassen.",
+        "use_case_2": "Sieh die aktuelle Phase jeder Story auf einem Board und ihre komplette Job-Verlaufshistorie (mit Live-Logs) in einer Zeitleiste."
+      },
+      "description_title": "Beschreibung",
+      "no_description": "Keine Beschreibung",
+      "comments_title": "Kommentare ({{count}})",
+      "comment_write": "Schreiben",
+      "comment_preview": "Vorschau",
+      "comment_placeholder": "Kommentar schreiben… Markdown wird unterstützt.",
+      "comment_nothing_to_preview": "Noch nichts zum Anzeigen",
+      "comment_submit": "Kommentieren",
+      "task_count_one": "{{count}} Aufgabe",
+      "task_count_other": "{{count}} Aufgaben"
     }
   },
   "autoImprovement": {

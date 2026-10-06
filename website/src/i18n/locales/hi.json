@@ -5319,6 +5319,36 @@
         "drive_bucket_label": "बकेट",
         "stat_spend_scope": "इस खाते का AWS बिल"
       }
+    },
+    "board": {
+      "title": "बोर्ड",
+      "backlog_column": "बैकलॉग",
+      "no_stories": "कोई कहानी नहीं",
+      "no_projects_configured": "कोई beads प्रोजेक्ट पथ कॉन्फ़िगर नहीं है। यहाँ कहानियाँ देखने के लिए knowledge.beads_project_paths सेट करें।",
+      "run_next_job": "अगला जॉब चलाएं",
+      "mark_reviewed_done": "समीक्षित के रूप में चिह्नित करें → पूर्ण",
+      "status_running": "चल रहा है",
+      "status_needs_attention": "ध्यान देने की आवश्यकता",
+      "status_failed": "विफल",
+      "timeline_title": "टाइमलाइन",
+      "no_history_yet": "अभी तक कोई इतिहास नहीं",
+      "manifest": {
+        "display_name": "बोर्ड",
+        "description": "एक beads कहानी को 9-कॉलम पाइपलाइन (Grooming → योजना → योजना समीक्षा → स्वीकृति → कार्यान्वयन → सत्यापन → PR → समीक्षा → पूर्ण) के माध्यम से आगे बढ़ाता है। हर जॉब एक crew-rocket कौशल से चलता है, साथ में लाइव लॉग और प्रत्येक कहानी की टाइमलाइन होती है। knowledge.beads_project_paths से प्रोजेक्ट कॉन्फ़िगर करें।",
+        "page_label": "बोर्ड",
+        "use_case_1": "डैशबोर्ड छोड़े बिना beads कहानी को grooming, योजना, कार्यान्वयन, सत्यापन, PR और समीक्षा के दौरान चलाएं।",
+        "use_case_2": "बोर्ड पर हर कहानी का वर्तमान चरण देखें, और टाइमलाइन में उसका पूरा जॉब-रन इतिहास (लाइव लॉग सहित) देखें।"
+      },
+      "description_title": "विवरण",
+      "no_description": "कोई विवरण नहीं",
+      "comments_title": "टिप्पणियाँ ({{count}})",
+      "comment_write": "लिखें",
+      "comment_preview": "पूर्वावलोकन",
+      "comment_placeholder": "एक टिप्पणी लिखें… Markdown समर्थित है।",
+      "comment_nothing_to_preview": "अभी पूर्वावलोकन के लिए कुछ नहीं",
+      "comment_submit": "टिप्पणी करें",
+      "task_count_one": "{{count}} कार्य",
+      "task_count_other": "{{count}} कार्य"
     }
   },
   "autoImprovement": {

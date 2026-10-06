@@ -5499,6 +5499,36 @@
         "drive_bucket_label": "Бакет",
         "stat_spend_scope": "Счёт AWS этого аккаунта"
       }
+    },
+    "board": {
+      "title": "Доска",
+      "backlog_column": "Бэклог",
+      "no_stories": "Нет историй",
+      "no_projects_configured": "Пути проектов beads не настроены. Укажите knowledge.beads_project_paths, чтобы увидеть истории здесь.",
+      "run_next_job": "Запустить следующую задачу",
+      "mark_reviewed_done": "Отметить проверенным → Готово",
+      "status_running": "Выполняется",
+      "status_needs_attention": "Требует внимания",
+      "status_failed": "Ошибка",
+      "timeline_title": "Хронология",
+      "no_history_yet": "Пока нет истории",
+      "manifest": {
+        "display_name": "Доска",
+        "description": "Проводит историю beads через конвейер из 9 столбцов (Grooming → Планирование → Проверка плана → Одобрение → Реализация → Проверка → PR → Ревью → Готово), один навык crew-rocket на задачу, с живым логом и хронологией по истории. Настройте проекты через knowledge.beads_project_paths.",
+        "page_label": "Доска",
+        "use_case_1": "Проведите историю beads через grooming, планирование, реализацию, проверку, PR и ревью, не покидая панель управления.",
+        "use_case_2": "Смотрите текущий этап каждой истории на доске и весь её журнал запусков (с живыми логами) на хронологии."
+      },
+      "description_title": "Описание",
+      "no_description": "Нет описания",
+      "comments_title": "Комментарии ({{count}})",
+      "comment_write": "Написать",
+      "comment_preview": "Предпросмотр",
+      "comment_placeholder": "Напишите комментарий… Поддерживается Markdown.",
+      "comment_nothing_to_preview": "Пока нечего предпросматривать",
+      "comment_submit": "Комментировать",
+      "task_count_one": "{{count}} задача",
+      "task_count_other": "{{count}} задач"
     }
   },
   "autoImprovement": {

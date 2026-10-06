@@ -3,8 +3,10 @@
 Follows the same real-store/real-pipeline, mocked-chunker/extractor shape as
 test_knowledge_artifact_ingest.py: ingest_file is involved enough (gating,
 budget, on_committed) that mocking it entirely would under-test this module.
-The one seam under this module's own control is `_run_bd` (the subprocess
-call), patched directly rather than mocking asyncio.create_subprocess_exec.
+The one seam this module's sync logic depends on is `kiro_crew.bd_cli.run_bd`
+(imported here as `run_bd`), patched directly rather than mocking
+asyncio.create_subprocess_exec - run_bd's own subprocess behavior is covered
+by test_bd_cli.py instead.
 """
 
 from __future__ import annotations
@@ -83,7 +85,7 @@ class TestSyncProject:
     @pytest.mark.asyncio
     async def test_no_bd_binary_is_a_clean_noop(self, kstore, pipeline):
         sync = BeadsKnowledgeSync(store=kstore, pipeline=pipeline, project_paths=["/tmp/proj"])
-        with patch.object(beads_ingest.shutil, "which", return_value=None):
+        with patch.object(beads_ingest, "run_bd", AsyncMock(return_value=None)):
             result = await sync.sync_project("/tmp/proj")
         assert result["error"]
         assert kstore.get_source_by_uri("beads:///tmp/proj") is None
@@ -100,7 +102,7 @@ class TestSyncProject:
                 return [_issue(issue_id, title=f"Issue {issue_id}")]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             result = await sync.sync_project("/tmp/proj")
 
         assert result["synced"] == 2
@@ -125,7 +127,7 @@ class TestSyncProject:
                 return [_issue("BEAD-1")]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             first = await sync.sync_project("/tmp/proj")
             second = await sync.sync_project("/tmp/proj")
 
@@ -150,7 +152,7 @@ class TestSyncProject:
                 return [_issue("BEAD-2", description="unrelated")]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             await sync.sync_project("/tmp/proj")
             state["desc"] = "version two"
             state["updated_at"] = "t2"
@@ -175,7 +177,7 @@ class TestSyncProject:
                 return [_issue(issue_id)]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             await sync.sync_project("/tmp/proj")
             live["ids"] = ["BEAD-1"]
             result = await sync.sync_project("/tmp/proj")
@@ -204,7 +206,7 @@ class TestSyncProject:
                 return [_issue("BEAD-1")]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             await sync.sync_project("/tmp/proj")
             await sync.sync_project("/tmp/proj")
             await sync.sync_project("/tmp/proj")
@@ -214,7 +216,7 @@ class TestSyncProject:
     @pytest.mark.asyncio
     async def test_bd_list_failure_is_a_clean_noop_not_an_exception(self, kstore, pipeline):
         sync = BeadsKnowledgeSync(store=kstore, pipeline=pipeline, project_paths=["/tmp/proj"])
-        with patch.object(beads_ingest, "_run_bd", AsyncMock(return_value=None)):
+        with patch.object(beads_ingest, "run_bd", AsyncMock(return_value=None)):
             result = await sync.sync_project("/tmp/proj")
         assert result["error"]
         assert result["synced"] == 0
@@ -233,7 +235,7 @@ class TestSyncProject:
                 return [_issue("BEAD-2")]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             result = await sync.sync_project("/tmp/proj")
 
         assert result["synced"] == 1
@@ -258,7 +260,7 @@ class TestSyncProject:
                 return [_issue("BEAD-1")]
             raise AssertionError(args)
 
-        with patch.object(beads_ingest, "_run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_ingest, "run_bd", side_effect=fake_run_bd):
             first = await sync.sync_project("/tmp/proj")
             state["updated_at"] = "t2"
             second = await sync.sync_project("/tmp/proj")
@@ -268,52 +270,6 @@ class TestSyncProject:
         assert second["synced"] == 0  # content unchanged despite new updated_at
         assert len(show_calls) == 2  # t1 and t2, not a third time for t2 again
         assert third["synced"] == 0
-
-
-class TestRunBdSubprocess:
-    """_run_bd against a real subprocess (no bd CLI mocking) - exercises the
-    actual asyncio.create_subprocess_exec path other tests patch around."""
-
-    @pytest.mark.asyncio
-    async def test_missing_binary_returns_none(self, tmp_path):
-        with patch.object(beads_ingest.shutil, "which", return_value=None):
-            result = await beads_ingest._run_bd(str(tmp_path), "list")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_nonzero_exit_returns_none(self, tmp_path):
-        with patch.object(beads_ingest.shutil, "which", return_value="/bin/false"):
-            result = await beads_ingest._run_bd(str(tmp_path), "list")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_non_json_stdout_returns_none(self, tmp_path):
-        with patch.object(beads_ingest.shutil, "which", return_value="/bin/echo"):
-            # _run_bd always appends "--json" after our args, so the real
-            # stdout here is "not json --json\n" - still non-JSON either way.
-            result = await beads_ingest._run_bd(str(tmp_path), "not json")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_valid_json_stdout_parses(self, tmp_path):
-        # A fixture script rather than /bin/echo: _run_bd always appends
-        # "--json" as a trailing arg, which a real binary's argv would ignore
-        # but echo would print literally, breaking the JSON. A script that
-        # ignores argv entirely sidesteps that without weakening what's
-        # actually under test (stdout -> parsed JSON).
-        script = tmp_path / "fake_bd.sh"
-        script.write_text("#!/bin/sh\necho '[1,2,3]'\n")
-        script.chmod(0o755)
-        with patch.object(beads_ingest.shutil, "which", return_value=str(script)):
-            result = await beads_ingest._run_bd(str(tmp_path), "list")
-        assert result == [1, 2, 3]
-
-    @pytest.mark.asyncio
-    async def test_timeout_returns_none(self, tmp_path):
-        with patch.object(beads_ingest.shutil, "which", return_value="/bin/sleep"):
-            with patch.object(beads_ingest, "_BD_TIMEOUT_SECS", 0.05):
-                result = await beads_ingest._run_bd(str(tmp_path), "5")
-        assert result is None
 
 
 class TestStartStop:

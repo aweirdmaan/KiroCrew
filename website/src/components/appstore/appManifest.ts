@@ -80,6 +80,14 @@ export const APP_MANIFEST_KEY: Record<string, ManifestKeys> = {
     useCases: ['apps.agentWorlds.manifest.use_case_1'],
     configuration: ['apps.agentWorlds.manifest.configuration_1'],
   },
+  'board': {
+    displayName: 'apps.board.manifest.display_name',
+    description: 'apps.board.manifest.description',
+    pageLabel: 'apps.board.manifest.page_label',
+    highlights: [],
+    useCases: ['apps.board.manifest.use_case_1', 'apps.board.manifest.use_case_2'],
+    configuration: [],
+  },
   'auto-improvement': {
     displayName: 'apps.autoImprovement.manifest.display_name',
     description: 'apps.autoImprovement.manifest.description',

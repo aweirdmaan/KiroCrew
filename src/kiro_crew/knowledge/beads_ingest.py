@@ -28,11 +28,11 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import tempfile
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from kiro_crew.bd_cli import run_bd
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
@@ -42,10 +42,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "beads"
-# Wall-clock budget for one `bd` invocation. `bd show` on a huge issue (many
-# comments) is still a local sqlite/dolt read, not a network call -- this is a
-# "the binary hung" guard, not a tuned timeout for real data volume.
-_BD_TIMEOUT_SECS = 30
 
 
 def render_issue(issue: dict) -> str:
@@ -85,45 +81,6 @@ def render_issue(issue: dict) -> str:
             lines.append(f"\n### {author} ({when})\n{c.get('text', '')}")
     text = "\n".join(lines)
     return redact_credentials(redact_exfiltration_urls(text)[0])[0]
-
-
-async def _run_bd(project_path: str, *args: str) -> object | None:
-    """Run ``bd <args> --json`` in ``project_path``; return parsed stdout, or
-    None on any failure (missing binary, non-zero exit, timeout, bad JSON).
-
-    None is deliberately not an exception: every caller treats a failed
-    attempt as "nothing to do this round" rather than a fatal sync error, so a
-    transient `bd` hiccup (a Dolt lock, a momentarily-missing binary on PATH)
-    does not escalate into a source the scheduler eventually quiesces to
-    'error' the way three real sync failures would (see SyncScheduler).
-    """
-    bd = shutil.which("bd")
-    if not bd:
-        logger.debug("beads sync: 'bd' not on PATH, skipping %s", project_path)
-        return None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            bd, *args, "--json",
-            cwd=project_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_BD_TIMEOUT_SECS)
-    except (OSError, asyncio.TimeoutError):
-        logger.warning("bd %s failed to run in %s", " ".join(args), project_path, exc_info=True)
-        return None
-    if proc.returncode != 0:
-        logger.warning(
-            "bd %s exited %d in %s: %s",
-            " ".join(args), proc.returncode, project_path,
-            stderr.decode(errors="replace")[:500],
-        )
-        return None
-    try:
-        return json.loads(stdout.decode(errors="replace"))
-    except json.JSONDecodeError:
-        logger.warning("bd %s returned non-JSON stdout in %s", " ".join(args), project_path)
-        return None
 
 
 class BeadsKnowledgeSync:
@@ -183,7 +140,7 @@ class BeadsKnowledgeSync:
         """Discover + (re)ingest every issue ``bd`` knows about under
         ``project_path``. Returns a small summary for logging/diagnostics."""
         result: dict[str, object] = {"synced": 0, "removed": 0, "error": None}
-        listing = await _run_bd(project_path, "list", "--all", "--limit", "0")
+        listing = await run_bd(project_path, "list", "--all", "--limit", "0")
         if not isinstance(listing, list):
             result["error"] = "bd list failed, returned no issues, or bd not found"
             return result
@@ -210,7 +167,7 @@ class BeadsKnowledgeSync:
             if list_updated_at and prior.get("list_updated_at") == list_updated_at:
                 continue
 
-            detail = await _run_bd(project_path, "show", "--id", issue_id)
+            detail = await run_bd(project_path, "show", "--id", issue_id)
             if not detail:
                 continue
             issue = detail[0] if isinstance(detail, list) and detail else detail

@@ -5229,6 +5229,36 @@
         "drive_bucket_label": "バケット",
         "stat_spend_scope": "このアカウントの AWS 請求額"
       }
+    },
+    "board": {
+      "title": "ボード",
+      "backlog_column": "バックログ",
+      "no_stories": "ストーリーなし",
+      "no_projects_configured": "beadプロジェクトパスが設定されていません。knowledge.beads_project_pathsを設定するとここにストーリーが表示されます。",
+      "run_next_job": "次のジョブを実行",
+      "mark_reviewed_done": "レビュー済みにする → 完了",
+      "status_running": "実行中",
+      "status_needs_attention": "要対応",
+      "status_failed": "失敗",
+      "timeline_title": "タイムライン",
+      "no_history_yet": "履歴はまだありません",
+      "manifest": {
+        "display_name": "ボード",
+        "description": "beadsのストーリーを9列のパイプライン（Grooming→計画→計画レビュー→承認→実装→検証→PR→レビュー→完了）で進めます。各ジョブはcrew-rocketの1つのスキルで実行され、ライブログとストーリーごとのタイムラインがあります。knowledge.beads_project_pathsでプロジェクトを設定してください。",
+        "page_label": "ボード",
+        "use_case_1": "ダッシュボードを離れずに、beadsストーリーをgroomingから計画、実装、検証、PR、レビューまで進めます。",
+        "use_case_2": "ボード上で各ストーリーの現在のフェーズを確認し、タイムラインで全ジョブ履歴（ライブログ付き）を確認できます。"
+      },
+      "description_title": "説明",
+      "no_description": "説明なし",
+      "comments_title": "コメント ({{count}})",
+      "comment_write": "編集",
+      "comment_preview": "プレビュー",
+      "comment_placeholder": "コメントを書く…Markdown対応",
+      "comment_nothing_to_preview": "プレビューする内容がありません",
+      "comment_submit": "コメントする",
+      "task_count_one": "{{count}} 件のタスク",
+      "task_count_other": "{{count}} 件のタスク"
     }
   },
   "autoImprovement": {

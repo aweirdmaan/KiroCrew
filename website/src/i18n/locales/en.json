@@ -4001,6 +4001,15 @@
         "drive_bucket_label": "Bucket",
         "stat_spend_scope": "This account's AWS bill"
       }
+    },
+    "board": {
+      "manifest": {
+        "display_name": "Board",
+        "description": "Moves a beads story through a 9-column pipeline (Grooming → Planning → Plan Review → Approval → Implementation → Verification → PR → Review → Done), one crew-rocket skill per job, with a live log and a per-story timeline. Configure projects via knowledge.beads_project_paths.",
+        "page_label": "Board",
+        "use_case_1": "Run a beads story through grooming, planning, implementation, verification, PR, and review without leaving the dashboard.",
+        "use_case_2": "See every story's current phase on one board, and its full job-run history (with live logs) in a timeline drawer."
+      }
     }
   },
   "components": {

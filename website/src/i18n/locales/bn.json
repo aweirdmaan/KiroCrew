@@ -5319,6 +5319,36 @@
         "drive_bucket_label": "বাকেট",
         "stat_spend_scope": "এই অ্যাকাউন্টের AWS বিল"
       }
+    },
+    "board": {
+      "title": "বোর্ড",
+      "backlog_column": "ব্যাকলগ",
+      "no_stories": "কোনো স্টোরি নেই",
+      "no_projects_configured": "কোনো beads প্রজেক্ট পাথ কনফিগার করা নেই। এখানে স্টোরি দেখতে knowledge.beads_project_paths সেট করুন।",
+      "run_next_job": "পরবর্তী জব চালান",
+      "mark_reviewed_done": "পর্যালোচিত হিসেবে চিহ্নিত করুন → সম্পন্ন",
+      "status_running": "চলছে",
+      "status_needs_attention": "মনোযোগ প্রয়োজন",
+      "status_failed": "ব্যর্থ",
+      "timeline_title": "টাইমলাইন",
+      "no_history_yet": "এখনো কোনো ইতিহাস নেই",
+      "manifest": {
+        "display_name": "বোর্ড",
+        "description": "একটি beads গল্পকে 9-কলাম পাইপলাইনের (Grooming → পরিকল্পনা → পরিকল্পনা পর্যালোচনা → অনুমোদন → বাস্তবায়ন → যাচাইকরণ → PR → পর্যালোচনা → সম্পন্ন) মধ্য দিয়ে এগিয়ে নেয়। প্রতিটি জব crew-rocket-এর একটি স্কিল দ্বারা চলে, সাথে লাইভ লগ এবং প্রতিটি গল্পের টাইমলাইন রয়েছে। knowledge.beads_project_paths এর মাধ্যমে প্রজেক্ট কনফিগার করুন।",
+        "page_label": "বোর্ড",
+        "use_case_1": "ড্যাশবোর্ড না ছেড়েই beads গল্পকে grooming, পরিকল্পনা, বাস্তবায়ন, যাচাইকরণ, PR এবং পর্যালোচনার মধ্য দিয়ে চালান।",
+        "use_case_2": "বোর্ডে প্রতিটি গল্পের বর্তমান পর্যায় দেখুন, এবং টাইমলাইনে এর সম্প৉42ণ জব-র্যান ইতিহাস (লাইভ লগ সহ) দেখুন।"
+      },
+      "description_title": "বিবরণ",
+      "no_description": "কোনো বিবরণ নেই",
+      "comments_title": "মন্তব্য ({{count}})",
+      "comment_write": "লিখুন",
+      "comment_preview": "পূর্বরূপ",
+      "comment_placeholder": "একটি মন্তব্য লিখুন… Markdown সমর্থিত।",
+      "comment_nothing_to_preview": "এখনও পূর্বরূপ দেখার মতো কিছু নেই",
+      "comment_submit": "মন্তব্য করুন",
+      "task_count_one": "{{count}}টি কাজ",
+      "task_count_other": "{{count}}টি কাজ"
     }
   },
   "autoImprovement": {

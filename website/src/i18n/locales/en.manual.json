@@ -1456,6 +1456,29 @@
         "co_author_conflict_discard_button": "Discard changes",
         "co_author_conflict_discard_title": "Discard unsaved changes?"
       }
+    },
+    "board": {
+      "title": "Board",
+      "backlog_column": "Backlog",
+      "no_stories": "No stories",
+      "no_projects_configured": "No beads project paths configured. Set knowledge.beads_project_paths to see stories here.",
+      "run_next_job": "Run next job",
+      "mark_reviewed_done": "Mark reviewed → Done",
+      "status_running": "Running",
+      "status_needs_attention": "Needs attention",
+      "status_failed": "Failed",
+      "timeline_title": "Timeline",
+      "no_history_yet": "No history yet",
+      "description_title": "Description",
+      "no_description": "No description",
+      "comments_title": "Comments ({{count}})",
+      "comment_write": "Write",
+      "comment_preview": "Preview",
+      "comment_placeholder": "Write a comment… Markdown supported.",
+      "comment_nothing_to_preview": "Nothing to preview yet",
+      "comment_submit": "Comment",
+      "task_count_one": "{{count}} task",
+      "task_count_other": "{{count}} tasks"
     }
   },
   "components": {
