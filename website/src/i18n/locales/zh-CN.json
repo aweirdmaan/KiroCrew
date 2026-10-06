@@ -13091,7 +13091,14 @@
       "the_dag_view_will_appear_once_the_plan_is_ready": "计划就绪后将显示 DAG 视图",
       "failed_to_update_task": "更新任务失败",
       "live": "实时",
-      "live_log_waiting": "等待运行产生输出…"
+      "live_log_waiting": "等待运行产生输出…",
+      "live_log_search_placeholder": "搜索日志…",
+      "live_log_no_matches": "没有符合筛选条件的日志行。",
+      "live_log_level_info": "信息",
+      "live_log_level_success": "成功",
+      "live_log_level_warning": "警告",
+      "live_log_level_error": "错误",
+      "live_log_level_agent": "代理"
     },
     "projectsPage": {
       "agent": "代理：",

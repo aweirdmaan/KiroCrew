@@ -13091,7 +13091,14 @@
       "the_dag_view_will_appear_once_the_plan_is_ready": "플랜이 준비되면 DAG 보기가 표시됩니다",
       "failed_to_update_task": "작업을 업데이트하지 못했습니다",
       "live": "실시간",
-      "live_log_waiting": "실행 출력을 기다리는 중…"
+      "live_log_waiting": "실행 출력을 기다리는 중…",
+      "live_log_search_placeholder": "로그 검색…",
+      "live_log_no_matches": "필터와 일치하는 로그가 없습니다.",
+      "live_log_level_info": "정보",
+      "live_log_level_success": "성공",
+      "live_log_level_warning": "경고",
+      "live_log_level_error": "오류",
+      "live_log_level_agent": "에이전트"
     },
     "projectsPage": {
       "agent": "에이전트:",

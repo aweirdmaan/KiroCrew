@@ -13283,7 +13283,14 @@
       "the_dag_view_will_appear_once_the_plan_is_ready": "Die DAG-Ansicht erscheint, sobald der Plan bereit ist",
       "failed_to_update_task": "Aufgabe konnte nicht aktualisiert werden",
       "live": "Live",
-      "live_log_waiting": "Warte auf Ausgabe des Laufs…"
+      "live_log_waiting": "Warte auf Ausgabe des Laufs…",
+      "live_log_search_placeholder": "Protokolle durchsuchen…",
+      "live_log_no_matches": "Keine Protokollzeilen entsprechen deinen Filtern.",
+      "live_log_level_info": "Info",
+      "live_log_level_success": "Erfolg",
+      "live_log_level_warning": "Warnung",
+      "live_log_level_error": "Fehler",
+      "live_log_level_agent": "Agent"
     },
     "projectsPage": {
       "agent": "Agent:",

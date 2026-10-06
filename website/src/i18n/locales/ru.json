@@ -13667,7 +13667,14 @@
       "the_dag_view_will_appear_once_the_plan_is_ready": "Представление DAG появится, когда план будет готов",
       "failed_to_update_task": "Не удалось обновить задачу",
       "live": "Реальное время",
-      "live_log_waiting": "Ожидание вывода выполнения…"
+      "live_log_waiting": "Ожидание вывода выполнения…",
+      "live_log_search_placeholder": "Поиск по логам…",
+      "live_log_no_matches": "Нет строк журнала, соответствующих фильтрам.",
+      "live_log_level_info": "Инфо",
+      "live_log_level_success": "Успех",
+      "live_log_level_warning": "Предупреждение",
+      "live_log_level_error": "Ошибка",
+      "live_log_level_agent": "Агент"
     },
     "projectsPage": {
       "agent": "Агент:",

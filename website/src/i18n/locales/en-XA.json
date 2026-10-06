@@ -12962,7 +12962,14 @@
       "task_is_waiting_for_your_decision": "[Ţàşķ {{index}} \"{{title}}\" ìş ẁàìţìñğ ƒøŕ ýøùŕ ðèçìşìøñ ···················]",
       "failed_to_update_task": "[Ƒàìĺèð ţø ùþðàţè ţàşķ ···············]",
       "live": "[Ĺìṽè ······]",
-      "live_log_waiting": "[Ẁàìţìñğ ƒøŕ ţĥè ŕùñ ţø þŕøðùçè øùţþùţ… ···················]"
+      "live_log_waiting": "[Ẁàìţìñğ ƒøŕ ţĥè ŕùñ ţø þŕøðùçè øùţþùţ… ···················]",
+      "live_log_search_placeholder": "[Şèàŕçĥ ĺøğş… ···········]",
+      "live_log_no_matches": "[Ñø ĺøğ ĺìñèş ɱàţçĥ ýøùŕ ƒìĺţèŕş. ················]",
+      "live_log_level_info": "[Ìñƒø ······]",
+      "live_log_level_success": "[Şùççèşş ···········]",
+      "live_log_level_warning": "[Ẁàŕñìñğ ···········]",
+      "live_log_level_error": "[Èŕŕøŕ ········]",
+      "live_log_level_agent": "[Àğèñţ ········]"
     },
     "projectsPage": {
       "agent": "[Àğèñţ: ·········]",

@@ -5726,7 +5726,14 @@
       "task_is_waiting_for_your_decision": "Task {{index}} \"{{title}}\" is waiting for your decision",
       "failed_to_update_task": "Failed to update task",
       "live": "Live",
-      "live_log_waiting": "Waiting for the run to produce output…"
+      "live_log_waiting": "Waiting for the run to produce output…",
+      "live_log_search_placeholder": "Search logs…",
+      "live_log_no_matches": "No log lines match your filters.",
+      "live_log_level_info": "Info",
+      "live_log_level_success": "Success",
+      "live_log_level_warning": "Warning",
+      "live_log_level_error": "Error",
+      "live_log_level_agent": "Agent"
     },
     "projectsPage": {
       "default_workspace_folder": "Default workspace folder",

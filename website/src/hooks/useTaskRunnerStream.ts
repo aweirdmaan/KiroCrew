@@ -11,6 +11,8 @@ export interface TaskRunnerStreamFrame {
   reason?: string
 }
 
+export type TaskRunnerLogLevel = 'info' | 'ok' | 'warn' | 'danger' | 'agent'
+
 export interface TaskRunnerLogLine {
   key: string
   text: string
@@ -26,6 +28,9 @@ export interface TaskRunnerLogLine {
    *  cleared once the step reaches a terminal status, so the UI can blink a
    *  cursor on exactly the line still being typed. */
   streaming?: boolean
+  /** Severity bucket derived from the frame's type/status, driving the
+   *  level badge + color in the UI and the level filter chips. */
+  level: TaskRunnerLogLevel
 }
 
 function formatFrame(frame: TaskRunnerStreamFrame): string[] {
@@ -41,6 +46,16 @@ function formatFrame(frame: TaskRunnerStreamFrame): string[] {
     default:
       return [JSON.stringify(frame)]
   }
+}
+
+function levelForFrame(frame: TaskRunnerStreamFrame): TaskRunnerLogLevel {
+  if (frame.type === 'progress') return 'agent'
+  if (frame.type === 'result') return frame.status === 'failed' ? 'danger' : 'agent'
+  const status = frame.status || ''
+  if (status === 'failed' || status === 'cancelled') return 'danger'
+  if (status === 'passed' || status === 'completed') return 'ok'
+  if (status === 'reviewing' || status === 'skipped' || status === 'paused') return 'warn'
+  return 'info'
 }
 
 /**
@@ -75,6 +90,7 @@ export function useTaskRunnerStream(taskId: string | null, active: boolean) {
     sse.onmessage = (e) => {
       try {
         const frame: TaskRunnerStreamFrame = JSON.parse(e.data)
+        const level = levelForFrame(frame)
         if (frame.type === 'progress') {
           // Grow the agent's current live-text line in place instead of
           // appending a new row per poll tick, so it reads as the agent
@@ -94,6 +110,7 @@ export function useTaskRunnerStream(taskId: string | null, active: boolean) {
                 isAgentText: true,
                 streaming: true,
                 stepIndex: frame.index,
+                level,
               },
             ]
           })
@@ -105,7 +122,7 @@ export function useTaskRunnerStream(taskId: string | null, active: boolean) {
             // final text) instead of appending a duplicate block below it.
             const last = prev[prev.length - 1]
             if (frame.type === 'result' && last?.streaming && last.stepIndex === frame.index) {
-              const updated = { ...last, text: rows.join('\n'), streaming: false }
+              const updated = { ...last, text: rows.join('\n'), streaming: false, level }
               return [...prev.slice(0, -1), updated]
             }
             return [
@@ -115,6 +132,7 @@ export function useTaskRunnerStream(taskId: string | null, active: boolean) {
                 text,
                 isAgentText: frame.type === 'result',
                 stepIndex: frame.index,
+                level,
               })),
             ]
           })

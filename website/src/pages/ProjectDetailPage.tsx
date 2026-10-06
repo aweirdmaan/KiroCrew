@@ -13,7 +13,7 @@ import { api } from '../api/client';
 import { AlertTriangle, Download, Hourglass, Zap } from 'lucide-react';
 import { Badge } from '../components/ui';
 import ErrorNotice from '../components/ErrorNotice';
-import { useTaskRunnerStream } from '../hooks/useTaskRunnerStream';
+import { useTaskRunnerStream, type TaskRunnerLogLevel } from '../hooks/useTaskRunnerStream';
 
 import { i18nT } from '../i18n/t'
 type Tab = 'idea' | 'tasks';
@@ -39,31 +39,134 @@ interface Props {
 const tabCls = (active: boolean) =>
   `px-4 py-1.5 text-[13px] rounded cursor-pointer border transition-all ${active ? 'bg-accent text-accent-fg border-accent' : 'bg-transparent text-muted border-border hover:text-text hover:border-border-strong'}`;
 
+const LOG_LEVELS: TaskRunnerLogLevel[] = ['info', 'ok', 'warn', 'danger', 'agent'];
+
+const LEVEL_BADGE_VARIANT: Record<TaskRunnerLogLevel, 'ok' | 'err' | 'warn' | 'aim' | 'muted'> = {
+  info: 'muted',
+  ok: 'ok',
+  warn: 'warn',
+  danger: 'err',
+  agent: 'aim',
+};
+
+const LEVEL_LABEL_KEY: Record<TaskRunnerLogLevel, string> = {
+  info: 'pages.projectDetailPage.live_log_level_info',
+  ok: 'pages.projectDetailPage.live_log_level_success',
+  warn: 'pages.projectDetailPage.live_log_level_warning',
+  danger: 'pages.projectDetailPage.live_log_level_error',
+  agent: 'pages.projectDetailPage.live_log_level_agent',
+};
+
+/** Splits `text` on every case-insensitive occurrence of `query`, wrapping
+ *  matches in <mark> - so a search hit is visible without re-reading the
+ *  whole line. Returns `text` unchanged (not wrapped in an array) when there
+ *  is nothing to highlight, to keep the common case cheap. */
+function highlightMatch(text: string, query: string): React.ReactNode {
+  if (!query) return text;
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  for (; ;) {
+    const found = lower.indexOf(q, i);
+    if (found === -1) {
+      parts.push(text.slice(i));
+      break;
+    }
+    if (found > i) parts.push(text.slice(i, found));
+    parts.push(
+      <mark key={found} className="bg-warn/50 text-text rounded-sm">
+        {text.slice(found, found + q.length)}
+      </mark>
+    );
+    i = found + q.length;
+  }
+  return parts;
+}
+
 /** Live Task Runner output, streamed over SSE (useTaskRunnerStream). Read-only
  * once the run stops: `active` gates the connection, not the rendered lines,
  * so the last frames stay visible instead of vanishing when the tab that
- * surfaces this view disappears alongside `run.status`. */
+ * surfaces this view disappears alongside `run.status`. Each line carries a
+ * severity level (derived from its frame's type/status) that drives a color
+ * badge and the filter chips above the log, and a free-text search narrows
+ * the visible lines and highlights the match - the "beautify it, make it
+ * searchable, color-code it" live-log upgrade. */
 function LiveLogPanel({ taskId, active }: { taskId: string; active: boolean }) {
   const lines = useTaskRunnerStream(taskId, active);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [lines.length]);
+  const [query, setQuery] = useState('');
+  const [hiddenLevels, setHiddenLevels] = useState<Set<TaskRunnerLogLevel>>(() => new Set());
+
+  const filteredLines = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return lines.filter(l => !hiddenLevels.has(l.level) && (!q || l.text.toLowerCase().includes(q)));
+  }, [lines, query, hiddenLevels]);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [filteredLines.length]);
+
+  const toggleLevel = (lvl: TaskRunnerLogLevel) => {
+    setHiddenLevels(prev => {
+      const next = new Set(prev);
+      if (next.has(lvl)) next.delete(lvl); else next.add(lvl);
+      return next;
+    });
+  };
 
   return (
-    <div
-      className="min-h-[300px] max-h-[70vh] overflow-auto bg-bg-elevated border border-border rounded-lg p-3 font-mono text-[12px] text-text whitespace-pre-wrap"
-      data-testid="project-detail-live-log"
-    >
-      {lines.length === 0 ? (
-        <div className="text-muted">{i18nT('pages.projectDetailPage.live_log_waiting')}</div>
-      ) : (
-        lines.map(l => (
-          <div key={l.key} className={l.isAgentText ? 'text-text' : 'text-muted'}>
-            {l.text}
-            {l.streaming ? <span className="animate-pulse">▋</span> : null}
-          </div>
-        ))
-      )}
-      <div ref={bottomRef} />
+    <div>
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={i18nT('pages.projectDetailPage.live_log_search_placeholder')}
+          className="flex-1 min-w-[160px] px-3 py-1.5 text-[12px] rounded-md border border-border bg-bg-elevated text-text placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+          data-testid="project-detail-live-log-search"
+        />
+        <div className="flex items-center gap-1 flex-wrap">
+          {LOG_LEVELS.map(lvl => {
+            const on = !hiddenLevels.has(lvl);
+            return (
+              <button
+                key={lvl}
+                type="button"
+                onClick={() => toggleLevel(lvl)}
+                className={`cursor-pointer transition-opacity ${on ? 'opacity-100' : 'opacity-35'}`}
+                data-testid={`project-detail-live-log-filter-${lvl}`}
+                aria-pressed={on}
+              >
+                <Badge variant={LEVEL_BADGE_VARIANT[lvl]} className="text-[9px] px-1.5 py-0">
+                  {i18nT(LEVEL_LABEL_KEY[lvl])}
+                </Badge>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        className="min-h-[300px] max-h-[70vh] overflow-auto bg-bg-elevated border border-border rounded-lg p-3 font-mono text-[12px] whitespace-pre-wrap"
+        data-testid="project-detail-live-log"
+      >
+        {lines.length === 0 ? (
+          <div className="text-muted">{i18nT('pages.projectDetailPage.live_log_waiting')}</div>
+        ) : filteredLines.length === 0 ? (
+          <div className="text-muted">{i18nT('pages.projectDetailPage.live_log_no_matches')}</div>
+        ) : (
+          filteredLines.map(l => (
+            <div key={l.key} className="flex items-start gap-2 py-[1px]">
+              <Badge variant={LEVEL_BADGE_VARIANT[l.level]} className="text-[9px] px-1.5 py-0 shrink-0 mt-[1px]">
+                {i18nT(LEVEL_LABEL_KEY[l.level])}
+              </Badge>
+              <span className={l.isAgentText ? 'text-text' : 'text-muted'}>
+                {highlightMatch(l.text, query)}
+                {l.streaming ? <span className="animate-pulse">▋</span> : null}
+              </span>
+            </div>
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

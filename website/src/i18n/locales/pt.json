@@ -13475,7 +13475,14 @@
       "the_dag_view_will_appear_once_the_plan_is_ready": "A visualização DAG aparecerá quando o plano estiver pronto",
       "failed_to_update_task": "Falha ao atualizar a tarefa",
       "live": "Ao vivo",
-      "live_log_waiting": "Aguardando a execução gerar saída…"
+      "live_log_waiting": "Aguardando a execução gerar saída…",
+      "live_log_search_placeholder": "Pesquisar registros…",
+      "live_log_no_matches": "Nenhuma linha de registro corresponde aos seus filtros.",
+      "live_log_level_info": "Informação",
+      "live_log_level_success": "Sucesso",
+      "live_log_level_warning": "Aviso",
+      "live_log_level_error": "Erro",
+      "live_log_level_agent": "Agente"
     },
     "projectsPage": {
       "agent": "Agente:",

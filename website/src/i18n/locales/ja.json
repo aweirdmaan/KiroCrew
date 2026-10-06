@@ -13091,7 +13091,14 @@
       "the_dag_view_will_appear_once_the_plan_is_ready": "プランが準備完了するとDAGビューが表示されます",
       "failed_to_update_task": "タスクの更新に失敗しました",
       "live": "ライブ",
-      "live_log_waiting": "実行の出力を待っています…"
+      "live_log_waiting": "実行の出力を待っています…",
+      "live_log_search_placeholder": "ログを検索…",
+      "live_log_no_matches": "フィルターに一致するログ行がありません。",
+      "live_log_level_info": "情報",
+      "live_log_level_success": "成功",
+      "live_log_level_warning": "警告",
+      "live_log_level_error": "エラー",
+      "live_log_level_agent": "エージェント"
     },
     "projectsPage": {
       "agent": "エージェント:",
