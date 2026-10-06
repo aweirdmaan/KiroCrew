@@ -5258,7 +5258,11 @@
       "comment_nothing_to_preview": "プレビューする内容がありません",
       "comment_submit": "コメントする",
       "task_count_one": "{{count}} 件のタスク",
-      "task_count_other": "{{count}} 件のタスク"
+      "task_count_other": "{{count}} 件のタスク",
+      "view_dag": "DAG",
+      "view_phased": "フェーズ別",
+      "view_live": "ライブ",
+      "no_log_yet": "まだログなし"
     }
   },
   "autoImprovement": {

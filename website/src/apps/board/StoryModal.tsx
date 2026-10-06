@@ -14,6 +14,9 @@ import { Badge } from '../../components/ui'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import ErrorNotice from '../../components/ErrorNotice'
 import { LiveLogPanel } from '../../components/LiveLogPanel'
+import DagView from '../../pages/aidlc/DagView'
+import PhasedView from '../../pages/aidlc/PhasedView'
+import type { TaskDetail } from '../../types'
 import { boardApi, type BoardStory, type RunRecord, type PhaseDef } from './boardApi'
 import { i18nT } from '../../i18n/t'
 
@@ -56,8 +59,70 @@ function TaskRow({ entry }: { entry: RunRecord }) {
   );
 }
 
-function JobGroup({ phase, phaseLabel, entries }: { phase: string; phaseLabel: string; entries: RunRecord[] }) {
+/** Maps a board RunRecord status onto the vocabulary DagView/PhasedView
+ *  already speak (the same one Task Runner's own task_details carry), so
+ *  a job's tasks render with the identical dots/colors/icons a native
+ *  Task Runner run would use - not a second status language. */
+function toTaskRunnerStatus(status: string | undefined): string {
+  if (!status) return 'pending'
+  if (status === 'running') return 'in_progress'
+  if (status === 'gate_failed') return 'failed'
+  return status
+}
+
+type JobViewMode = 'dag' | 'phased' | 'live'
+
+/** A job (board column/phase) grouping its tasks two ways at once: the
+ * structural view (DAG or Phased, reusing the exact same components the
+ * Task Runner "Tasks" tab renders - just fed this job's own task list
+ * instead of a whole project's) for "what does this job look like", and
+ * the flat attempt log below for "what actually happened, including every
+ * retry" - a looping job like Verification can run `confirm` several times
+ * and the structural view only ever shows its LATEST attempt per task. */
+function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
+  phase: string; phaseLabel: string; taskKeys: string[]; entries: RunRecord[]
+}) {
   const [open, setOpen] = useState(true)
+  const [view, setView] = useState<JobViewMode>('live')
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+
+  // taskKeys comes from the job's OWN definition (/api/board/phases), so a
+  // not-yet-run task still shows up as a "pending" node - entries only
+  // exist once a task has actually run at least once.
+  const keys = taskKeys.length ? taskKeys : [...new Set(entries.map(e => e.task_key))]
+
+  const latestByKey = useMemo(() => {
+    const map = new Map<string, RunRecord>()
+    for (const e of entries) map.set(e.task_key, e) // chronological: last write wins
+    return map
+  }, [entries]);
+
+  const attemptsByKey = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const e of entries) map.set(e.task_key, (map.get(e.task_key) ?? 0) + 1)
+    return map
+  }, [entries]);
+
+  const effectiveKey = selectedKey
+    ?? keys.find(k => latestByKey.get(k)?.status === 'running')
+    ?? [...keys].reverse().find(k => latestByKey.has(k))
+    ?? keys[0];
+  const selectedEntry = effectiveKey ? latestByKey.get(effectiveKey) : undefined;
+
+  const dagNodes = keys.map((key, i) => ({
+    id: String(i + 1), title: key, status: toTaskRunnerStatus(latestByKey.get(key)?.status),
+  }));
+  const dagEdges = keys.slice(0, -1).map((_, i) => ({ from: String(i + 1), to: String(i + 2) }));
+
+  const phasedTasks: TaskDetail[] = keys.map((key, i) => ({
+    index: i + 1, title: key, description: '',
+    status: toTaskRunnerStatus(latestByKey.get(key)?.status),
+    error: '', result: '', attempts: attemptsByKey.get(key) ?? 0,
+    depends_on: i === 0 ? [] : [i], requires_approval: false,
+  }));
+
+  const selectedIndex = effectiveKey ? keys.indexOf(effectiveKey) + 1 : undefined;
+
   return (
     <div className="border border-border-strong rounded-lg overflow-hidden" data-testid={`board-job-${phase}`}>
       <button
@@ -69,13 +134,54 @@ function JobGroup({ phase, phaseLabel, entries }: { phase: string; phaseLabel: s
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           {phaseLabel}
         </span>
-        <span className="text-[11px] text-muted">{i18nT('apps.board.task_count', { count: entries.length })}</span>
+        <span className="text-[11px] text-muted">{i18nT('apps.board.task_count', { count: keys.length })}</span>
       </button>
       {open && (
-        <div className="p-2 flex flex-col gap-2 bg-bg">
-          {entries.map((entry, i) => (
-            <TaskRow key={`${entry.task_key}-${entry.iteration}-${entry.task_id ?? i}`} entry={entry} />
-          ))}
+        <div className="p-2 flex flex-col gap-3 bg-bg">
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              {(['dag', 'phased', 'live'] as const).map(v => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  className={`text-[11px] px-2 py-1 rounded cursor-pointer ${view === v ? 'bg-accent text-accent-fg' : 'text-muted hover:text-text bg-bg-elevated'}`}
+                  data-testid={`board-job-${phase}-view-${v}`}
+                >
+                  {i18nT(`apps.board.view_${v}`)}
+                </button>
+              ))}
+            </div>
+            <div data-testid={`board-job-${phase}-view-content`}>
+              {view === 'dag' && (
+                <DagView
+                  nodes={dagNodes}
+                  edges={dagEdges}
+                  onNodeClick={id => setSelectedKey(keys[Number(id) - 1] ?? null)}
+                  selectedId={selectedIndex ? String(selectedIndex) : undefined}
+                />
+              )}
+              {view === 'phased' && (
+                <PhasedView
+                  tasks={phasedTasks}
+                  onTaskClick={index => setSelectedKey(keys[index - 1] ?? null)}
+                  selectedIndex={selectedIndex ?? null}
+                />
+              )}
+              {view === 'live' && (
+                selectedEntry?.task_id ? (
+                  <LiveLogPanel taskId={selectedEntry.task_id} active />
+                ) : (
+                  <div className="text-[12px] text-muted px-1">{i18nT('apps.board.no_log_yet')}</div>
+                )
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            {entries.map((entry, i) => (
+              <TaskRow key={`${entry.task_key}-${entry.iteration}-${entry.task_id ?? i}`} entry={entry} />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -242,6 +348,7 @@ export default function StoryModal({ story, phases, onClose }: {
                     key={phase}
                     phase={phase}
                     phaseLabel={phases.find(p => p.key === phase)?.label ?? phase}
+                    taskKeys={phases.find(p => p.key === phase)?.tasks ?? []}
                     entries={entries}
                   />
                 ))

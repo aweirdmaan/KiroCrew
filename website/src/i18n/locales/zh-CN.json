@@ -5258,7 +5258,11 @@
       "comment_nothing_to_preview": "暂无可预览内容",
       "comment_submit": "评论",
       "task_count_one": "{{count}} 个任务",
-      "task_count_other": "{{count}} 个任务"
+      "task_count_other": "{{count}} 个任务",
+      "view_dag": "DAG",
+      "view_phased": "分阶段",
+      "view_live": "实时",
+      "no_log_yet": "暂无日志"
     }
   },
   "autoImprovement": {

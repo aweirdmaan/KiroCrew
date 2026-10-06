@@ -5348,7 +5348,11 @@
       "comment_nothing_to_preview": "अभी पूर्वावलोकन के लिए कुछ नहीं",
       "comment_submit": "टिप्पणी करें",
       "task_count_one": "{{count}} कार्य",
-      "task_count_other": "{{count}} कार्य"
+      "task_count_other": "{{count}} कार्य",
+      "view_dag": "DAG",
+      "view_phased": "चरणबद्ध",
+      "view_live": "लाइव",
+      "no_log_yet": "अभी तक कोई लॉग नहीं"
     }
   },
   "autoImprovement": {

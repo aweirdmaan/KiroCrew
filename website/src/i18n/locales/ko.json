@@ -5258,7 +5258,11 @@
       "comment_nothing_to_preview": "아직 미리볼 내용이 없습니다",
       "comment_submit": "댓글 작성",
       "task_count_one": "작업 {{count}}개",
-      "task_count_other": "작업 {{count}}개"
+      "task_count_other": "작업 {{count}}개",
+      "view_dag": "DAG",
+      "view_phased": "단계별",
+      "view_live": "실시간",
+      "no_log_yet": "아직 로그 없음"
     }
   },
   "autoImprovement": {

@@ -1478,7 +1478,11 @@
       "comment_nothing_to_preview": "Nothing to preview yet",
       "comment_submit": "Comment",
       "task_count_one": "{{count}} task",
-      "task_count_other": "{{count}} tasks"
+      "task_count_other": "{{count}} tasks",
+      "view_dag": "DAG",
+      "view_phased": "Phased",
+      "view_live": "Live",
+      "no_log_yet": "No log yet"
     }
   },
   "components": {

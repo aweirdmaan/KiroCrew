@@ -5348,7 +5348,11 @@
       "comment_nothing_to_preview": "এখনও পূর্বরূপ দেখার মতো কিছু নেই",
       "comment_submit": "মন্তব্য করুন",
       "task_count_one": "{{count}}টি কাজ",
-      "task_count_other": "{{count}}টি কাজ"
+      "task_count_other": "{{count}}টি কাজ",
+      "view_dag": "DAG",
+      "view_phased": "ধাপবিভাগ",
+      "view_live": "লাইভ",
+      "no_log_yet": "এখনও কোনো লগ নেই"
     }
   },
   "autoImprovement": {

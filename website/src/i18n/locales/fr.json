@@ -5438,7 +5438,11 @@
       "comment_nothing_to_preview": "Rien à prévisualiser pour l'instant",
       "comment_submit": "Commenter",
       "task_count_one": "{{count}} tâche",
-      "task_count_other": "{{count}} tâches"
+      "task_count_other": "{{count}} tâches",
+      "view_dag": "DAG",
+      "view_phased": "Par phases",
+      "view_live": "En direct",
+      "no_log_yet": "Pas encore de journal"
     }
   },
   "autoImprovement": {

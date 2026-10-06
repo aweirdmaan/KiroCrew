@@ -5194,7 +5194,11 @@
       "comment_nothing_to_preview": "[Ñøţĥìñğ ţø þŕèṽìèẁ ýèţ ···············]",
       "comment_submit": "[Çøɱɱèñţ ···········]",
       "task_count_one": "[{{count}} ţàşķ ········]",
-      "task_count_other": "[{{count}} ţàşķş ·········]"
+      "task_count_other": "[{{count}} ţàşķş ·········]",
+      "view_dag": "[ÐÀĞ ·····]",
+      "view_phased": "[Þĥàşèð ·········]",
+      "view_live": "[Ĺìṽè ······]",
+      "no_log_yet": "[Ñø ĺøğ ýèţ ···············]"
     }
   },
   "components": {

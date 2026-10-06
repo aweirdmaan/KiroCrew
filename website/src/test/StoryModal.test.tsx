@@ -87,12 +87,16 @@ describe('StoryModal', () => {
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
     await waitFor(() => expect(screen.getByTestId('board-timeline-row')).toBeInTheDocument());
+    const row = screen.getByTestId('board-timeline-row');
     // The expand toggle is the inner <button>, not the outer row container a
     // click on the testid'd div itself would not reach (click handlers don't
     // fire from a parent's click target).
-    fireEvent.click(within(screen.getByTestId('board-timeline-row')).getByRole('button'));
+    fireEvent.click(within(row).getByRole('button'));
 
-    const panel = await screen.findByTestId('stub-live-log-panel');
+    // Scoped to the row: the job's own structural view (default tab "live")
+    // also renders a log panel for its latest task, so a page-wide query
+    // would match two elements once this row expands too.
+    const panel = await within(row).findByTestId('stub-live-log-panel');
     expect(panel).toHaveAttribute('data-active', 'true');
     expect(panel).toHaveAttribute('data-task-id', 'task-1');
   });
@@ -113,6 +117,72 @@ describe('StoryModal', () => {
     await waitFor(() => expect(screen.getByTestId('board-job-verification')).toBeInTheDocument());
     const job = screen.getByTestId('board-job-verification');
     expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3);
+  });
+
+  it('a job defaults to the Live view, showing its latest/selected task\'s log', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [run({ status: 'passed', task_id: 'task-grooming' })],
+    });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-grooming');
+    expect(within(job).getByTestId('board-job-grooming-view-live')).toHaveClass('bg-accent');
+    const panel = within(job).getByTestId('stub-live-log-panel');
+    expect(panel).toHaveAttribute('data-task-id', 'task-grooming');
+  });
+
+  it('switching a job to the DAG view renders one node per task, in order', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [
+        run({ phase: 'verification', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'verification', task_key: 'fix', status: 'passed' }),
+      ],
+    });
+
+    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-verification');
+    fireEvent.click(within(job).getByTestId('board-job-verification-view-dag'));
+
+    // Scoped to the view-content wrapper, not the whole job: the flat
+    // attempt log below also renders each task_key as text, which would
+    // otherwise make these an ambiguous "found multiple elements" match.
+    const content = within(job).getByTestId('board-job-verification-view-content');
+    // DagView renders each node's title as SVG text - "confirm" never ran,
+    // so it should still appear as a pending node (fed from the job's own
+    // task list, not only from entries that have happened).
+    await waitFor(() => expect(within(content).getByText('verify')).toBeInTheDocument());
+    expect(within(content).getByText('fix')).toBeInTheDocument();
+    expect(within(content).getByText('confirm')).toBeInTheDocument();
+  });
+
+  it('switching a job to the Phased view lists its tasks with attempt counts', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [
+        run({ phase: 'verification', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'verification', task_key: 'fix', status: 'passed', iteration: 0 }),
+        run({ phase: 'verification', task_key: 'fix', status: 'gate_failed', iteration: 1 }),
+      ],
+    });
+
+    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-verification');
+    fireEvent.click(within(job).getByTestId('board-job-verification-view-phased'));
+
+    // PhasedView renders a task's title inline as "Task N: <title>" (one
+    // combined text node), so an exact match on just "fix" would never hit -
+    // a substring matcher is the correct query here, not a workaround.
+    const content = within(job).getByTestId('board-job-verification-view-content');
+    await waitFor(() => expect(within(content).getByText(/fix/)).toBeInTheDocument());
+    expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3); // unaffected by the tab switch
   });
 
   it('posts a new comment through the composer', async () => {

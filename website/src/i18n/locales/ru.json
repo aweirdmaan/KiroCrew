@@ -5528,7 +5528,11 @@
       "comment_nothing_to_preview": "Пока нечего предпросматривать",
       "comment_submit": "Комментировать",
       "task_count_one": "{{count}} задача",
-      "task_count_other": "{{count}} задач"
+      "task_count_other": "{{count}} задач",
+      "view_dag": "DAG",
+      "view_phased": "По фазам",
+      "view_live": "В реальном времени",
+      "no_log_yet": "Пока нет лога"
     }
   },
   "autoImprovement": {

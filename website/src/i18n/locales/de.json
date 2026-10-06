@@ -5348,7 +5348,11 @@
       "comment_nothing_to_preview": "Noch nichts zum Anzeigen",
       "comment_submit": "Kommentieren",
       "task_count_one": "{{count}} Aufgabe",
-      "task_count_other": "{{count}} Aufgaben"
+      "task_count_other": "{{count}} Aufgaben",
+      "view_dag": "DAG",
+      "view_phased": "Phasen",
+      "view_live": "Live",
+      "no_log_yet": "Noch kein Log"
     }
   },
   "autoImprovement": {
