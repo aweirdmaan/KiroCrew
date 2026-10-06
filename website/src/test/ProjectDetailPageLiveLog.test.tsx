@@ -58,8 +58,16 @@ describe('ProjectDetailPage — live log', () => {
     expect(within(log).getByText(/Once upon a time, a B-tree grew\./)).toBeInTheDocument()
   })
 
-  it('hides the Live tab for a completed run', () => {
+  it('still shows the Live tab for a completed run, for replay', () => {
+    // The backend keeps a replayable frame buffer for as long as the run
+    // stays around, so a finished run's live log is still worth opening -
+    // the tab should only disappear before a run has actually started.
     renderWithProviders(<ProjectDetailPage run={mockRun({ status: 'completed', running: false })} />)
+    expect(screen.getByTestId('project-detail-live-tab')).toBeInTheDocument()
+  })
+
+  it('hides the Live tab before a run has started (planning/planned)', () => {
+    renderWithProviders(<ProjectDetailPage run={mockRun({ status: 'planning', running: false })} />)
     expect(screen.queryByTestId('project-detail-live-tab')).toBeNull()
   })
 

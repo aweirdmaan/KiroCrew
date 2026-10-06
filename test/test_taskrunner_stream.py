@@ -10,6 +10,7 @@ own streaming endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -19,6 +20,19 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew.dashboard.handlers import api_taskrunner_stream
+from kiro_crew.dashboard.handlers import taskrunner as taskrunner_handlers
+
+
+@pytest.fixture(autouse=True)
+def _clear_stream_states():
+    # _stream_states is a module-level, process-lifetime cache keyed by
+    # task_id (that's the whole point - it outlives any one connection so a
+    # reload/second tab can replay history). Every test here reuses "t1", so
+    # without this a later test would inherit an earlier test's finished
+    # producer/buffer instead of exercising its own MagicMock runner.
+    taskrunner_handlers._stream_states.clear()
+    yield
+    taskrunner_handlers._stream_states.clear()
 
 
 def _make_app(state: SimpleNamespace) -> web.Application:
@@ -243,3 +257,78 @@ async def test_redacts_credentials_and_exfil_urls_in_streamed_text():
     frames = _parse_frames(body)
     result_frame = next(f for f in frames if f["type"] == "result")
     assert "ghp_" not in result_frame["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_connection_replays_history_instead_of_only_new_frames():
+    # This is the whole point of the producer/consumer split: a run that
+    # finished before a tab opened (or reopened after a reload) must still
+    # see its full history, not just frames emitted while THIS connection
+    # happened to be open.
+    runner = MagicMock()
+    runner._runs = {"t1": MagicMock()}
+    snapshot = {
+        "runs": [
+            {
+                "task_id": "t1",
+                "status": "completed",
+                "running": False,
+                "completed": 1,
+                "tasks": 1,
+                "task_details": [
+                    {"index": 1, "title": "Step one", "status": "passed", "result": "all good"}
+                ],
+            }
+        ]
+    }
+    runner.status.side_effect = [snapshot] * 10
+    state = SimpleNamespace(task_runner=runner)
+    app = _make_app(state)
+    async with TestClient(TestServer(app)) as client:
+        first = await client.get("/api/taskrunner/t1/stream")
+        first_frames = _parse_frames(await first.read())
+        assert [f["type"] for f in first_frames] == ["run", "step", "result", "ended"]
+
+        # A brand new connection, after the run already finished and the
+        # first connection already closed - same frames, replayed from seq 0.
+        second = await client.get("/api/taskrunner/t1/stream")
+        second_frames = _parse_frames(await second.read())
+        assert second_frames == first_frames
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_connections_each_see_every_frame():
+    runner = MagicMock()
+    runner._runs = {"t1": MagicMock()}
+    snapshot = {
+        "runs": [
+            {
+                "task_id": "t1",
+                "status": "completed",
+                "running": False,
+                "completed": 1,
+                "tasks": 1,
+                "task_details": [
+                    {"index": 1, "title": "Step one", "status": "passed", "result": "all good"}
+                ],
+            }
+        ]
+    }
+    runner.status.side_effect = [snapshot] * 10
+    state = SimpleNamespace(task_runner=runner)
+    app = _make_app(state)
+    async with TestClient(TestServer(app)) as client:
+        resp_a, resp_b = await asyncio.gather(
+            client.get("/api/taskrunner/t1/stream"),
+            client.get("/api/taskrunner/t1/stream"),
+        )
+        body_a, body_b = await asyncio.gather(resp_a.read(), resp_b.read())
+
+    frames_a = _parse_frames(body_a)
+    frames_b = _parse_frames(body_b)
+    assert [f["type"] for f in frames_a] == ["run", "step", "result", "ended"]
+    assert frames_a == frames_b
+    # One shared producer, not one per connection: a second connection must
+    # not have caused task_runner.status() to be polled through its own
+    # independent loop on top of the first's.
+    assert runner.status.call_count <= 10

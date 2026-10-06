@@ -84,14 +84,15 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   return parts;
 }
 
-/** Live Task Runner output, streamed over SSE (useTaskRunnerStream). Read-only
- * once the run stops: `active` gates the connection, not the rendered lines,
- * so the last frames stay visible instead of vanishing when the tab that
- * surfaces this view disappears alongside `run.status`. Each line carries a
- * severity level (derived from its frame's type/status) that drives a color
- * badge and the filter chips above the log, and a free-text search narrows
- * the visible lines and highlights the match - the "beautify it, make it
- * searchable, color-code it" live-log upgrade. */
+/** Live Task Runner output, streamed over SSE (useTaskRunnerStream). The
+ * backend keeps a replayable per-run frame buffer for as long as the run
+ * stays in task_runner._runs (not just while a connection is open), so
+ * reopening this tab - even after the run finished, even after a reload -
+ * replays the full history instead of starting from whatever happened to
+ * still be in this component's own state. Each line carries a severity level
+ * (derived from its frame's type/status) that drives a color badge and the
+ * filter chips above the log, and a free-text search narrows the visible
+ * lines and highlights the match. */
 function LiveLogPanel({ taskId, active }: { taskId: string; active: boolean }) {
   const lines = useTaskRunnerStream(taskId, active);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -329,7 +330,11 @@ export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
               <span className="mx-1 text-muted">·</span>
               <button onClick={() => setView('dag')} className={tabCls(view === 'dag')}>{i18nT('pages.projectDetailPage.dag')}</button>
               <button onClick={() => setView('phased')} className={tabCls(view === 'phased')}>{i18nT('pages.projectDetailPage.phased')}</button>
-              {run.status === 'running' && (
+              {run.status !== 'planning' && run.status !== 'planned' && (
+                // Not gated on 'running': the backend now keeps a replayable
+                // buffer of a run's stream for as long as the run itself
+                // stays around, so a finished run's live log is still worth
+                // opening - it just replays instead of still growing.
                 <button onClick={() => setView('live')} className={tabCls(view === 'live')} data-testid="project-detail-live-tab">
                   {i18nT('pages.projectDetailPage.live')}
                 </button>
@@ -417,7 +422,12 @@ export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
               <div className="text-muted text-[13px]">{i18nT('pages.projectDetailPage.no_idea_or_spec_content_available')}</div>
             )
           ) : view === 'live' ? (
-            <LiveLogPanel taskId={run.task_id} active={run.status === 'running'} />
+            // Always active: this branch only renders while view === 'live',
+            // so LiveLogPanel is only ever mounted when it should be
+            // connected - the backend replays a finished run's buffered
+            // history and then closes the stream on its own (an "ended"
+            // frame), there's no reason to gate the connection further here.
+            <LiveLogPanel taskId={run.task_id} active />
           ) : view === 'dag' ? (
             <DagView
               nodes={tasks.map(t => ({ id: String(t.index), title: t.title, status: t.status, task_type: t.task_type, requires_approval: t.requires_approval }))}
