@@ -13,10 +13,11 @@ import { api } from '../api/client';
 import { AlertTriangle, Download, Hourglass, Zap } from 'lucide-react';
 import { Badge } from '../components/ui';
 import ErrorNotice from '../components/ErrorNotice';
+import { useTaskRunnerStream } from '../hooks/useTaskRunnerStream';
 
 import { i18nT } from '../i18n/t'
 type Tab = 'idea' | 'tasks';
-type ViewMode = 'dag' | 'phased';
+type ViewMode = 'dag' | 'phased' | 'live';
 
 /** Human text for a caught failure: the `ApiError` / `Error` message, else the value itself. */
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -37,6 +38,35 @@ interface Props {
 
 const tabCls = (active: boolean) =>
   `px-4 py-1.5 text-[13px] rounded cursor-pointer border transition-all ${active ? 'bg-accent text-accent-fg border-accent' : 'bg-transparent text-muted border-border hover:text-text hover:border-border-strong'}`;
+
+/** Live Task Runner output, streamed over SSE (useTaskRunnerStream). Read-only
+ * once the run stops: `active` gates the connection, not the rendered lines,
+ * so the last frames stay visible instead of vanishing when the tab that
+ * surfaces this view disappears alongside `run.status`. */
+function LiveLogPanel({ taskId, active }: { taskId: string; active: boolean }) {
+  const lines = useTaskRunnerStream(taskId, active);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [lines.length]);
+
+  return (
+    <div
+      className="min-h-[300px] max-h-[70vh] overflow-auto bg-bg-elevated border border-border rounded-lg p-3 font-mono text-[12px] text-text whitespace-pre-wrap"
+      data-testid="project-detail-live-log"
+    >
+      {lines.length === 0 ? (
+        <div className="text-muted">{i18nT('pages.projectDetailPage.live_log_waiting')}</div>
+      ) : (
+        lines.map(l => (
+          <div key={l.key} className={l.isAgentText ? 'text-text' : 'text-muted'}>
+            {l.text}
+            {l.streaming ? <span className="animate-pulse">▋</span> : null}
+          </div>
+        ))
+      )}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
 
 export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
   const [tab, setTab] = useState<Tab>('tasks');
@@ -196,6 +226,11 @@ export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
               <span className="mx-1 text-muted">·</span>
               <button onClick={() => setView('dag')} className={tabCls(view === 'dag')}>{i18nT('pages.projectDetailPage.dag')}</button>
               <button onClick={() => setView('phased')} className={tabCls(view === 'phased')}>{i18nT('pages.projectDetailPage.phased')}</button>
+              {run.status === 'running' && (
+                <button onClick={() => setView('live')} className={tabCls(view === 'live')} data-testid="project-detail-live-tab">
+                  {i18nT('pages.projectDetailPage.live')}
+                </button>
+              )}
             </>
           )}
           <div className="flex-1" />
@@ -278,6 +313,8 @@ export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
             ) : (
               <div className="text-muted text-[13px]">{i18nT('pages.projectDetailPage.no_idea_or_spec_content_available')}</div>
             )
+          ) : view === 'live' ? (
+            <LiveLogPanel taskId={run.task_id} active={run.status === 'running'} />
           ) : view === 'dag' ? (
             <DagView
               nodes={tasks.map(t => ({ id: String(t.index), title: t.title, status: t.status, task_type: t.task_type, requires_approval: t.requires_approval }))}

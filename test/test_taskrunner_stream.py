@@ -126,6 +126,95 @@ async def test_streams_run_step_result_then_ends():
 
 
 @pytest.mark.asyncio
+async def test_streams_in_progress_text_as_it_grows():
+    runner = MagicMock()
+    runner._runs = {"t1": MagicMock()}
+    snapshots = [
+        {
+            "runs": [
+                {
+                    "task_id": "t1",
+                    "status": "running",
+                    "running": True,
+                    "completed": 0,
+                    "tasks": 1,
+                    "task_details": [{"index": 1, "title": "Step one", "status": "in_progress"}],
+                }
+            ]
+        },
+        {
+            "runs": [
+                {
+                    "task_id": "t1",
+                    "status": "running",
+                    "running": True,
+                    "completed": 0,
+                    "tasks": 1,
+                    "task_details": [
+                        {
+                            "index": 1,
+                            "title": "Step one",
+                            "status": "in_progress",
+                            "result": "Thinking about",
+                        }
+                    ],
+                }
+            ]
+        },
+        {
+            "runs": [
+                {
+                    "task_id": "t1",
+                    "status": "running",
+                    "running": True,
+                    "completed": 0,
+                    "tasks": 1,
+                    "task_details": [
+                        {
+                            "index": 1,
+                            "title": "Step one",
+                            "status": "in_progress",
+                            "result": "Thinking about the problem...",
+                        }
+                    ],
+                }
+            ]
+        },
+        {
+            "runs": [
+                {
+                    "task_id": "t1",
+                    "status": "completed",
+                    "running": False,
+                    "completed": 1,
+                    "tasks": 1,
+                    "task_details": [
+                        {
+                            "index": 1,
+                            "title": "Step one",
+                            "status": "passed",
+                            "result": "Thinking about the problem... done.",
+                        }
+                    ],
+                }
+            ]
+        },
+    ]
+    runner.status.side_effect = snapshots + [snapshots[-1]] * 10
+    state = SimpleNamespace(task_runner=runner)
+    app = _make_app(state)
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/api/taskrunner/t1/stream")
+        body = await resp.read()
+
+    frames = _parse_frames(body)
+    progress_frames = [f for f in frames if f["type"] == "progress"]
+    assert [f["text"] for f in progress_frames] == ["Thinking about", " the problem..."]
+    result_frame = next(f for f in frames if f["type"] == "result")
+    assert result_frame["text"] == "Thinking about the problem... done."
+
+
+@pytest.mark.asyncio
 async def test_redacts_credentials_and_exfil_urls_in_streamed_text():
     runner = MagicMock()
     runner._runs = {"t1": MagicMock()}

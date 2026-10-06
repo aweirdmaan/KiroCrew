@@ -5724,7 +5724,9 @@
       "export_yaml": "Export YAML",
       "exporting": "Exporting…",
       "task_is_waiting_for_your_decision": "Task {{index}} \"{{title}}\" is waiting for your decision",
-      "failed_to_update_task": "Failed to update task"
+      "failed_to_update_task": "Failed to update task",
+      "live": "Live",
+      "live_log_waiting": "Waiting for the run to produce output…"
     },
     "projectsPage": {
       "default_workspace_folder": "Default workspace folder",

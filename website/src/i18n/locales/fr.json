@@ -13473,7 +13473,9 @@
       "task_is_waiting_for_your_decision": "Tâche {{index}} \"{{title}}\" attend votre décision",
       "tasks": "Tâches",
       "the_dag_view_will_appear_once_the_plan_is_ready": "La vue DAG apparaîtra dès que le plan sera prêt",
-      "failed_to_update_task": "Échec de la mise à jour de la tâche"
+      "failed_to_update_task": "Échec de la mise à jour de la tâche",
+      "live": "En direct",
+      "live_log_waiting": "En attente de la sortie de l'exécution…"
     },
     "projectsPage": {
       "agent": "Agent :",

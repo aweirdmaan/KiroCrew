@@ -1075,8 +1075,17 @@ async def api_taskrunner_stream(request: web.Request) -> web.StreamResponse:
     Frame shapes (one JSON object per ``data:`` line):
       {"type": "run", "status": ..., "completed": int, "tasks": int}
       {"type": "step", "index": int, "title": str, "status": ...}
+      {"type": "progress", "index": int, "text": str}
       {"type": "result", "index": int, "status": "passed"|"failed", "text": str}
       {"type": "ended", "reason": str, "status"?: ...}
+
+    "progress" carries the agent's own in-progress turn text (task.result,
+    which task_executor.py now updates on a ~0.25s cadence while a step is
+    still "running") so the dashboard can show what the agent is actually
+    writing as it happens, not just a status label - "result" only ever
+    fires once a step reaches a terminal status. "text" is the delta since
+    the last "progress"/"result" frame for that index, so the client can
+    just append it.
     """
     state: DashboardState = request.app["state"]
     if not state.task_runner:
@@ -1101,6 +1110,7 @@ async def api_taskrunner_stream(request: web.Request) -> web.StreamResponse:
     last_run_status: str | None = None
     last_step_status: dict[int, str] = {}
     sent_result_for: set[int] = set()
+    sent_progress_len: dict[int, int] = {}
 
     async def send(event: dict) -> bool:
         try:
@@ -1150,6 +1160,22 @@ async def api_taskrunner_stream(request: web.Request) -> web.StreamResponse:
                         stop = True
                         break
                     last_step_status[idx] = step["status"]
+                if step["status"] in ("in_progress", "reviewing"):
+                    text = step.get("result") or ""
+                    if text:
+                        text = redact_credentials(redact_exfiltration_urls(text)[0])[0]
+                    prev_len = sent_progress_len.get(idx, 0)
+                    if len(text) > prev_len:
+                        if not await send({"type": "progress", "index": idx, "text": text[prev_len:]}):
+                            stop = True
+                            break
+                        sent_progress_len[idx] = len(text)
+                    elif len(text) < prev_len:
+                        # The serialized status truncates result to 2000 chars,
+                        # so a long turn can make text shrink relative to what
+                        # we already sent - resync the cursor without
+                        # replaying anything.
+                        sent_progress_len[idx] = len(text)
                 if step["status"] in ("passed", "failed") and idx not in sent_result_for:
                     text = step.get("result") or step.get("error") or ""
                     if text:

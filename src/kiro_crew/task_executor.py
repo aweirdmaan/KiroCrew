@@ -510,14 +510,23 @@ async def execute_task(
             # build and episodic-query embed above are turn setup, not the turn,
             # and this loop re-runs per attempt so each row measures its own turn.
             _turn_t0 = _time.monotonic()
+            # Time-based (not count-based) throttle: a slow-generating turn
+            # used to leave task.result (and so the taskrunner status/SSE
+            # stream a dashboard reads live) stuck at "" until 50 chunks had
+            # landed. Updating on a short wall-clock cadence instead means the
+            # very first tokens of a turn show up almost immediately, which is
+            # what the live-log UI needs to feel live rather than silent.
+            _last_result_update = 0.0
             async for event in client.stream(full_prompt):
                 if event.kind == EVENT_TEXT_CHUNK:
                     result_text += event.text
                     _chunk_count += 1
-                    if _chunk_count % 50 == 0:
+                    _now = _time.monotonic()
+                    if _now - _last_result_update >= 0.25:
                         task.result = redact_credentials(
                             redact_exfiltration_urls(result_prefix + result_text)[0]
                         )[0]
+                        _last_result_update = _now
                     run.last_task_time = _time.time()
                     run.tokens_used += max(1, len(event.text) // 4)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
