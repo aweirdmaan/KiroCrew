@@ -97,21 +97,21 @@ function LiveLogPanel({ taskId, active }: { taskId: string; active: boolean }) {
   const lines = useTaskRunnerStream(taskId, active);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = useState('');
-  const [hiddenLevels, setHiddenLevels] = useState<Set<TaskRunnerLogLevel>>(() => new Set());
+  // null = no isolation, every level shows. Clicking a pill isolates that
+  // level (hides every other one); clicking the SAME pill again clears the
+  // isolation back to showing everything - a highlight/solo toggle, not a
+  // per-level hide toggle.
+  const [onlyLevel, setOnlyLevel] = useState<TaskRunnerLogLevel | null>(null);
 
   const filteredLines = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return lines.filter(l => !hiddenLevels.has(l.level) && (!q || l.text.toLowerCase().includes(q)));
-  }, [lines, query, hiddenLevels]);
+    return lines.filter(l => (!onlyLevel || l.level === onlyLevel) && (!q || l.text.toLowerCase().includes(q)));
+  }, [lines, query, onlyLevel]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [filteredLines.length]);
 
   const toggleLevel = (lvl: TaskRunnerLogLevel) => {
-    setHiddenLevels(prev => {
-      const next = new Set(prev);
-      if (next.has(lvl)) next.delete(lvl); else next.add(lvl);
-      return next;
-    });
+    setOnlyLevel(prev => (prev === lvl ? null : lvl));
   };
 
   return (
@@ -127,15 +127,16 @@ function LiveLogPanel({ taskId, active }: { taskId: string; active: boolean }) {
         />
         <div className="flex items-center gap-1 flex-wrap">
           {LOG_LEVELS.map(lvl => {
-            const on = !hiddenLevels.has(lvl);
+            const selected = onlyLevel === lvl;
+            const dimmed = onlyLevel !== null && !selected;
             return (
               <button
                 key={lvl}
                 type="button"
                 onClick={() => toggleLevel(lvl)}
-                className={`cursor-pointer transition-opacity ${on ? 'opacity-100' : 'opacity-35'}`}
+                className={`cursor-pointer rounded-full transition-all ${dimmed ? 'opacity-35' : 'opacity-100'} ${selected ? 'ring-2 ring-accent ring-offset-1 ring-offset-bg-elevated' : ''}`}
                 data-testid={`project-detail-live-log-filter-${lvl}`}
-                aria-pressed={on}
+                aria-pressed={selected}
               >
                 <Badge variant={LEVEL_BADGE_VARIANT[lvl]} className="text-[9px] px-1.5 py-0">
                   {i18nT(LEVEL_LABEL_KEY[lvl])}

@@ -28,7 +28,7 @@ for arg in "$@"; do
   esac
 done
 
-echo "Building frontend (website/)…"
+echo "Building frontend (website/)..."
 (
   cd "$ROOT/website"
   if [ -f package-lock.json ]; then
@@ -52,7 +52,7 @@ if [ "$RESTART" != "1" ]; then
   exit 0
 fi
 
-echo "Restarting gateway on port $PORT…"
+echo "Restarting gateway on port ${PORT}..."
 pkill -f "kirocrew gateway" 2>/dev/null || true
 sleep 1
 rm -f "$HOME/.kiro/crew/gateway.lock" 2>/dev/null || true

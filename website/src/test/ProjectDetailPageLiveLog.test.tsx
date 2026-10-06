@@ -92,22 +92,34 @@ describe('ProjectDetailPage — live log', () => {
     expect(within(log).getByText('beta').tagName).toBe('MARK')
   })
 
-  it('toggling a level filter chip hides lines of that level', async () => {
+  it('clicking a level chip isolates that level instead of hiding it', async () => {
     const streams = installEventSource()
     renderWithProviders(<ProjectDetailPage run={mockRun()} />)
     fireEvent.click(screen.getByTestId('project-detail-live-tab'))
     await waitFor(() => expect(streams.length).toBe(1))
 
+    send(streams, { type: 'run', status: 'running', completed: 0, tasks: 1 })
     send(streams, { type: 'step', index: 1, title: 'Explain', status: 'in_progress' })
     send(streams, { type: 'progress', index: 1, text: 'live agent text' })
 
     const log = screen.getByTestId('project-detail-live-log')
+    // Before any chip is clicked, both an info-level line ("run") and an
+    // agent-level line (the progress text) are visible.
+    expect(within(log).getByText(/RUN running/)).toBeInTheDocument()
     expect(within(log).getByText(/live agent text/)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('project-detail-live-log-filter-agent'))
-    expect(within(log).queryByText(/live agent text/)).toBeNull()
+    const agentChip = screen.getByTestId('project-detail-live-log-filter-agent')
+    fireEvent.click(agentChip)
+    // Selecting "agent" HIGHLIGHTS/isolates it: agent lines stay, everything
+    // else (the info-level "run" line) is hidden - not the other way round.
+    expect(agentChip).toHaveAttribute('aria-pressed', 'true')
+    expect(within(log).getByText(/live agent text/)).toBeInTheDocument()
+    expect(within(log).queryByText(/RUN running/)).toBeNull()
 
-    fireEvent.click(screen.getByTestId('project-detail-live-log-filter-agent'))
+    // Clicking the SAME chip again clears the isolation.
+    fireEvent.click(agentChip)
+    expect(agentChip).toHaveAttribute('aria-pressed', 'false')
+    expect(within(log).getByText(/RUN running/)).toBeInTheDocument()
     expect(within(log).getByText(/live agent text/)).toBeInTheDocument()
   })
 })
