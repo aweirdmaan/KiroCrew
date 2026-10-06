@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import re
 import uuid
@@ -1052,3 +1054,123 @@ async def api_taskrunner_refine_answer(request: web.Request) -> web.Response:
     except asyncio.InvalidStateError:
         return web.json_response({"error": "question already resolved"}, status=409)
     return web.json_response({"ok": True})
+
+
+_STREAM_POLL_INTERVAL_S = 0.3
+
+
+async def api_taskrunner_stream(request: web.Request) -> web.StreamResponse:
+    """GET /api/taskrunner/{task_id}/stream — Server-Sent Events of step changes.
+
+    Deliberately isolated from push_slots_update and the WS/SSE slots pipeline:
+    that mechanism is already overloaded (serialize_slot_views, governance
+    generations, app-token filtering) and a new event type threaded through it
+    would need to prove it cannot regress any of that. This instead polls the
+    SAME in-memory ``Project`` ``api_taskrunner_status`` already reads -
+    read-only, no new mutation call sites in task_executor.py - at a tighter
+    interval than the dashboard's own 3s client poll, and emits one SSE frame
+    per change. Ends the stream once the run reaches a terminal status and
+    its final frame has gone out, or when the client disconnects.
+
+    Frame shapes (one JSON object per ``data:`` line):
+      {"type": "run", "status": ..., "completed": int, "tasks": int}
+      {"type": "step", "index": int, "title": str, "status": ...}
+      {"type": "result", "index": int, "status": "passed"|"failed", "text": str}
+      {"type": "ended", "reason": str, "status"?: ...}
+    """
+    state: DashboardState = request.app["state"]
+    if not state.task_runner:
+        return web.json_response(
+            {"error": "task runner not available", "code": "task_runner_unavailable"}, status=400
+        )
+    reference = request.match_info["task_id"]
+    task_id = _canonical_task_reference(state.task_runner, reference)
+    if task_id not in state.task_runner._runs:
+        return web.json_response({"error": "not found", "code": "task_not_found"}, status=404)
+
+    response = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+    await response.prepare(request)
+
+    last_run_status: str | None = None
+    last_step_status: dict[int, str] = {}
+    sent_result_for: set[int] = set()
+
+    async def send(event: dict) -> bool:
+        try:
+            await response.write(f"data: {json.dumps(event)}\n\n".encode())
+            return True
+        except (ConnectionResetError, asyncio.CancelledError):
+            return False
+
+    try:
+        while True:
+            if task_id not in state.task_runner._runs:
+                await send({"type": "ended", "reason": "run no longer tracked"})
+                break
+            status = state.task_runner.status()
+            entry = next((r for r in status["runs"] if r["task_id"] == task_id), None)
+            if entry is None:
+                await send({"type": "ended", "reason": "run no longer visible"})
+                break
+
+            if entry.get("error"):
+                entry["error"] = redact_credentials(redact_exfiltration_urls(entry["error"])[0])[0]
+
+            if entry["status"] != last_run_status:
+                if not await send(
+                    {
+                        "type": "run",
+                        "status": entry["status"],
+                        "completed": entry.get("completed", 0),
+                        "tasks": entry.get("tasks", 0),
+                    }
+                ):
+                    break
+                last_run_status = entry["status"]
+
+            stop = False
+            for step in entry.get("task_details", []):
+                idx = step["index"]
+                if last_step_status.get(idx) != step["status"]:
+                    if not await send(
+                        {
+                            "type": "step",
+                            "index": idx,
+                            "title": step.get("title", ""),
+                            "status": step["status"],
+                        }
+                    ):
+                        stop = True
+                        break
+                    last_step_status[idx] = step["status"]
+                if step["status"] in ("passed", "failed") and idx not in sent_result_for:
+                    text = step.get("result") or step.get("error") or ""
+                    if text:
+                        text = redact_credentials(redact_exfiltration_urls(text)[0])[0]
+                    if not await send(
+                        {"type": "result", "index": idx, "status": step["status"], "text": text}
+                    ):
+                        stop = True
+                        break
+                    sent_result_for.add(idx)
+            if stop:
+                break
+
+            if not entry.get("running") and entry["status"] != "running":
+                await send({"type": "ended", "reason": "run finished", "status": entry["status"]})
+                break
+
+            await asyncio.sleep(_STREAM_POLL_INTERVAL_S)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            await response.write_eof()
+    return response
