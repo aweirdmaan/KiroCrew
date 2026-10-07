@@ -83,7 +83,7 @@ type JobViewMode = 'dag' | 'phased' | 'live'
 function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
   phase: string; phaseLabel: string; taskKeys: string[]; entries: RunRecord[]
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const [view, setView] = useState<JobViewMode>('live')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
 

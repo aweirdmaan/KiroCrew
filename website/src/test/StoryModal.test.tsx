@@ -88,8 +88,10 @@ describe('StoryModal', () => {
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    await waitFor(() => expect(screen.getByTestId('board-timeline-row')).toBeInTheDocument());
-    const row = screen.getByTestId('board-timeline-row');
+    const job = await screen.findByTestId('board-job-grooming');
+    fireEvent.click(within(job).getByRole('button', { name: /Grooming/ }));
+    await waitFor(() => expect(within(job).getByTestId('board-timeline-row')).toBeInTheDocument());
+    const row = within(job).getByTestId('board-timeline-row');
     // The expand toggle is the inner <button>, not the outer row container a
     // click on the testid'd div itself would not reach (click handlers don't
     // fire from a parent's click target).
@@ -101,6 +103,20 @@ describe('StoryModal', () => {
     const panel = await within(row).findByTestId('stub-live-log-panel');
     expect(panel).toHaveAttribute('data-active', 'true');
     expect(panel).toHaveAttribute('data-task-id', 'task-1');
+  });
+
+  it('timeline job groups are collapsed by default', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [run({ status: 'passed' })],
+    });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-grooming');
+    expect(within(job).queryByTestId('board-timeline-row')).toBeNull();
+    expect(within(job).queryByTestId('board-job-grooming-view-content')).toBeNull();
   });
 
   it('groups timeline entries by job (phase), with multiple tasks nested under one job', async () => {
@@ -118,6 +134,7 @@ describe('StoryModal', () => {
 
     await waitFor(() => expect(screen.getByTestId('board-job-verification')).toBeInTheDocument());
     const job = screen.getByTestId('board-job-verification');
+    fireEvent.click(within(job).getByRole('button', { name: /Verification/ }));
     expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3);
   });
 
@@ -131,6 +148,7 @@ describe('StoryModal', () => {
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
     const job = await screen.findByTestId('board-job-grooming');
+    fireEvent.click(within(job).getByRole('button', { name: /Grooming/ }));
     expect(within(job).getByTestId('board-job-grooming-view-live')).toHaveClass('bg-accent');
     const panel = within(job).getByTestId('stub-live-log-panel');
     expect(panel).toHaveAttribute('data-task-id', 'task-grooming');
@@ -149,6 +167,7 @@ describe('StoryModal', () => {
     renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
 
     const job = await screen.findByTestId('board-job-verification');
+    fireEvent.click(within(job).getByRole('button', { name: /Verification/ }));
     fireEvent.click(within(job).getByTestId('board-job-verification-view-dag'));
 
     // Scoped to the view-content wrapper, not the whole job: the flat
@@ -177,6 +196,7 @@ describe('StoryModal', () => {
     renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
 
     const job = await screen.findByTestId('board-job-verification');
+    fireEvent.click(within(job).getByRole('button', { name: /Verification/ }));
     fireEvent.click(within(job).getByTestId('board-job-verification-view-phased'));
 
     // PhasedView renders a task's title inline as "Task N: <title>" (one
