@@ -157,6 +157,34 @@ async def add_story_comment(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def update_story_route(request: web.Request) -> web.Response:
+    """POST /api/board/stories/{id}/update — edit the card's title/description.
+    Body: {"title"?: "...", "description"?: "..."}, at least one required.
+    Unlike comments (append-only in beads, see add_story_comment's sibling
+    "edit" in the frontend), issue fields are plain mutable columns via
+    `bd update`, so this is a real in-place edit."""
+    story_id = request.match_info["id"]
+    project_path = await _find_story_project(story_id)
+    if project_path is None:
+        return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
+    body, body_err = await read_bounded_json(request, max_bytes=64_000)
+    if body_err is not None:
+        return body_err
+    assert body is not None
+    title = body.get("title")
+    description = body.get("description")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        return web.json_response({"error": "title cannot be blank", "code": "empty_title"}, status=400)
+    if description is not None and not isinstance(description, str):
+        return web.json_response({"error": "description must be a string", "code": "bad_description"}, status=400)
+    if title is None and description is None:
+        return web.json_response({"error": "nothing to update", "code": "empty_update"}, status=400)
+    ok = await board_detail.update_story(project_path, story_id, title=title, description=description)
+    if not ok:
+        return web.json_response({"error": "bd update failed", "code": "bd_unavailable"}, status=502)
+    return web.json_response({"ok": True})
+
+
 def setup_board_routes(app: web.Application) -> None:
     app.router.add_get("/api/board/phases", get_phases)
     app.router.add_get("/api/board/stories", list_board_stories)
@@ -165,3 +193,4 @@ def setup_board_routes(app: web.Application) -> None:
     app.router.add_get("/api/board/stories/{id}/history", get_story_history)
     app.router.add_get("/api/board/stories/{id}/detail", get_story_detail_route)
     app.router.add_post("/api/board/stories/{id}/comments", add_story_comment)
+    app.router.add_post("/api/board/stories/{id}/update", update_story_route)

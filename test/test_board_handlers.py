@@ -192,3 +192,53 @@ class TestAddStoryComment:
              patch.object(board_handlers.board_detail, "add_comment", AsyncMock(return_value=False)):
             resp = await board_handlers.add_story_comment(req)
         assert resp.status == 502
+
+
+class TestUpdateStoryRoute:
+    @pytest.mark.asyncio
+    async def test_updates_title_and_description(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        body = {"title": "New title", "description": "New body"}
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=(body, None))), \
+             patch.object(board_handlers.board_detail, "update_story", AsyncMock(return_value=True)) as mocked:
+            resp = await board_handlers.update_story_route(req)
+        data = await _body(resp)
+        assert data == {"ok": True}
+        mocked.assert_called_once_with("/proj", "s-1", title="New title", description="New body")
+
+    @pytest.mark.asyncio
+    async def test_blank_title_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"title": "   "}, None))):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "empty_title"
+
+    @pytest.mark.asyncio
+    async def test_no_fields_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({}, None))):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "empty_update"
+
+    @pytest.mark.asyncio
+    async def test_unknown_story_is_404(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value=None)):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 404
+
+    @pytest.mark.asyncio
+    async def test_bd_failure_is_502(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"title": "x"}, None))), \
+             patch.object(board_handlers.board_detail, "update_story", AsyncMock(return_value=False)):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 502

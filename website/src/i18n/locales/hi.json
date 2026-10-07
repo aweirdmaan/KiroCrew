@@ -5357,7 +5357,11 @@
       "open_questions_hint": "नीचे जवाब दें, फिर जमा करें – पूरी टिप्पणी लिखने की जरूरत नहीं।",
       "open_questions_answer_placeholder": "आपका जवाब…",
       "open_questions_submit": "जवाब जमा करें",
-      "open_questions_skip_note": "किसी प्रश्न को छोड़ने के लिए खाली छोड़ें।"
+      "open_questions_skip_note": "किसी प्रश्न को छोड़ने के लिए खाली छोड़ें।",
+      "edit_cancel": "रद्द करें",
+      "edit_save": "सहेजें",
+      "comment_edit_hint": "इसे एक नई टिप्पणी के रूप में सहेजा जाएगा — beads टिप्पणियों को पोस्ट होने के बाद बदला नहीं जा सकता, इसलिए मूल टिप्पणी इतिहास के लिए नीचे बनी रहेगी।",
+      "comment_edit_marker": "_(संपादित)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

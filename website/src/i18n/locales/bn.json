@@ -5357,7 +5357,11 @@
       "open_questions_hint": "নিচে উত্তর দিয়ে জমা দিন – পুরো মন্তব্য লেখার দরকার নেই।",
       "open_questions_answer_placeholder": "আপনার উত্তর…",
       "open_questions_submit": "উত্তর জমা দিন",
-      "open_questions_skip_note": "কোনো প্রশ্ন এড়িয়ে যেতে খালি রাখুন।"
+      "open_questions_skip_note": "কোনো প্রশ্ন এড়িয়ে যেতে খালি রাখুন।",
+      "edit_cancel": "বাতিল করুন",
+      "edit_save": "সংরক্ষণ করুন",
+      "comment_edit_hint": "এটি একটি নতুন মন্তব্য হিসেবে সংরক্ষিত হবে — beads মন্তব্য পোস্ট হওয়ার পর পরিবর্তন করা যায় না, তাই মূলটি ইতিহাসের জন্য নিচে থেকে যাবে।",
+      "comment_edit_marker": "_(সম্পাদিত)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

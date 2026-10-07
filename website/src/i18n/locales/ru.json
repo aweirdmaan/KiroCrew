@@ -5537,7 +5537,11 @@
       "open_questions_hint": "Ответьте ниже и отправьте — полный комментарий писать не нужно.",
       "open_questions_answer_placeholder": "Ваш ответ…",
       "open_questions_submit": "Отправить ответы",
-      "open_questions_skip_note": "Оставьте пустым, чтобы пропустить вопрос."
+      "open_questions_skip_note": "Оставьте пустым, чтобы пропустить вопрос.",
+      "edit_cancel": "Отмена",
+      "edit_save": "Сохранить",
+      "comment_edit_hint": "Сохраняется как новый комментарий — комментарии beads нельзя изменить задним числом, поэтому оригинал остаётся ниже для истории.",
+      "comment_edit_marker": "_(отредактировано)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

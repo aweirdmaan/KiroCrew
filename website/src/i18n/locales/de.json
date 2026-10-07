@@ -5357,7 +5357,11 @@
       "open_questions_hint": "Unten antworten und absenden – kein vollständiger Kommentar nötig.",
       "open_questions_answer_placeholder": "Deine Antwort…",
       "open_questions_submit": "Antworten senden",
-      "open_questions_skip_note": "Leer lassen, um eine Frage zu überspringen."
+      "open_questions_skip_note": "Leer lassen, um eine Frage zu überspringen.",
+      "edit_cancel": "Abbrechen",
+      "edit_save": "Speichern",
+      "comment_edit_hint": "Wird als neuer Kommentar gespeichert — Beads-Kommentare lassen sich nachträglich nicht ändern, daher bleibt das Original zur Nachverfolgung erhalten.",
+      "comment_edit_marker": "_(bearbeitet)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

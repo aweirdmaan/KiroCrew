@@ -95,4 +95,6 @@ export const boardApi = {
   advance: (storyId: string) => corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/advance`),
   addComment: (storyId: string, text: string) =>
     corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/comments`, { text }),
+  updateStory: (storyId: string, fields: { title?: string; description?: string }) =>
+    corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/update`, fields),
 }

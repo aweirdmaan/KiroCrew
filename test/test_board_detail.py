@@ -75,3 +75,43 @@ class TestAddComment:
         with patch.object(board_detail, "run_bd", AsyncMock(return_value=None)):
             ok = await board_detail.add_comment("/proj", "s-1", "hello")
         assert ok is False
+
+
+class TestUpdateStory:
+    @pytest.mark.asyncio
+    async def test_updates_title_and_description_via_bd(self):
+        calls = []
+
+        async def fake_run_bd(project_path, *args):
+            calls.append(args)
+            return [{"status": "ok"}]
+
+        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+            ok = await board_detail.update_story("/proj", "s-1", title="New title", description="New body")
+        assert ok is True
+        assert calls == [("update", "s-1", "--title", "New title", "--description", "New body")]
+
+    @pytest.mark.asyncio
+    async def test_updates_only_the_field_given(self):
+        calls = []
+
+        async def fake_run_bd(project_path, *args):
+            calls.append(args)
+            return [{"status": "ok"}]
+
+        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+            await board_detail.update_story("/proj", "s-1", description="Only this changed")
+        assert calls == [("update", "s-1", "--description", "Only this changed")]
+
+    @pytest.mark.asyncio
+    async def test_no_fields_given_is_not_posted(self):
+        with patch.object(board_detail, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
+            ok = await board_detail.update_story("/proj", "s-1")
+        assert ok is False
+        mocked.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bd_failure_returns_false(self):
+        with patch.object(board_detail, "run_bd", AsyncMock(return_value=None)):
+            ok = await board_detail.update_story("/proj", "s-1", title="x")
+        assert ok is False

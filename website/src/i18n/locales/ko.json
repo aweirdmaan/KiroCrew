@@ -5267,7 +5267,11 @@
       "open_questions_hint": "아래에 답변하고 제출하세요 – 전체 댓글을 작성할 필요 없습니다.",
       "open_questions_answer_placeholder": "답변…",
       "open_questions_submit": "답변 제출",
-      "open_questions_skip_note": "질문을 건너뜨려면 비워두세요."
+      "open_questions_skip_note": "질문을 건너뜨려면 비워두세요.",
+      "edit_cancel": "취소",
+      "edit_save": "저장",
+      "comment_edit_hint": "새 댓글로 저장됩니다 — beads 댓글은 게시 후 수정할 수 없어 원본은 기록을 위해 아래에 그대로 남습니다.",
+      "comment_edit_marker": "_(수정됨)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

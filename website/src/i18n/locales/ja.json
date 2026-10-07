@@ -5267,7 +5267,11 @@
       "open_questions_hint": "下に回答して送信…完全なコメントを書く必要はありません。",
       "open_questions_answer_placeholder": "あなたの回答…",
       "open_questions_submit": "回答を送信",
-      "open_questions_skip_note": "質問をスキップする場合は空白のままにしてください。"
+      "open_questions_skip_note": "質問をスキップする場合は空白のままにしてください。",
+      "edit_cancel": "キャンセル",
+      "edit_save": "保存",
+      "comment_edit_hint": "新しいコメントとして保存されます — beadsのコメントは投稿後に変更できないため、元のコメントは履歴として下に残ります。",
+      "comment_edit_marker": "_(編集済み)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

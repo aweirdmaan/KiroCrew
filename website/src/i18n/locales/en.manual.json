@@ -1487,7 +1487,11 @@
       "open_questions_hint": "Answer below, then submit - no need to write a full comment.",
       "open_questions_answer_placeholder": "Your answer…",
       "open_questions_submit": "Submit Answers",
-      "open_questions_skip_note": "Leave blank to skip a question."
+      "open_questions_skip_note": "Leave blank to skip a question.",
+      "edit_cancel": "Cancel",
+      "edit_save": "Save",
+      "comment_edit_hint": "Saved as a new comment — beads comments can't be changed in place, so the original stays below for history.",
+      "comment_edit_marker": "_(edited)_\n\n{{text}}"
     }
   },
   "components": {

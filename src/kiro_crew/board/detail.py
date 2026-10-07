@@ -60,3 +60,21 @@ async def add_comment(project_path: str, story_id: str, text: str) -> bool:
         return False
     result = await run_bd(project_path, "comments", "add", story_id, text)
     return result is not None
+
+
+async def update_story(
+    project_path: str, story_id: str, *, title: str | None = None, description: str | None = None
+) -> bool:
+    """Edit the card itself via `bd update`. Unlike comments, beads issue
+    fields are plain mutable columns - no embedded-mode restriction here
+    (see add_comment's docstring/the board's comment "edit" for why that
+    one has to work differently)."""
+    args: list[str] = ["update", story_id]
+    if title is not None:
+        args += ["--title", title]
+    if description is not None:
+        args += ["--description", description]
+    if len(args) == 2:
+        return False
+    result = await run_bd(project_path, *args)
+    return result is not None

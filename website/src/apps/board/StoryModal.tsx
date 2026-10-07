@@ -9,7 +9,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle, Check } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -17,7 +17,7 @@ import { LiveLogPanel } from '../../components/LiveLogPanel'
 import DagView from '../../pages/aidlc/DagView'
 import PhasedView from '../../pages/aidlc/PhasedView'
 import type { TaskDetail } from '../../types'
-import { boardApi, type BoardStory, type RunRecord, type PhaseDef } from './boardApi'
+import { boardApi, type BoardStory, type RunRecord, type PhaseDef, type BeadsComment } from './boardApi'
 import { findPendingOpenQuestions, formatAnswers, type ParsedQuestion } from './openQuestions'
 import { i18nT } from '../../i18n/t'
 
@@ -196,6 +196,84 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
  * an unanswered OPEN QUESTIONS post (see findPendingOpenQuestions) - once
  * an answer comment goes out, this panel's own query refetch makes it
  * disappear on its own, same as a normal comment would. */
+/** beads comments are append-only - there's no `bd` command to edit or
+ * delete one in place (confirmed against the installed CLI; even Beadbox,
+ * a dedicated beads GUI, only deletes and only on a server-mode workspace
+ * crew-rocket's embedded-mode one isn't). So "editing" a comment here posts
+ * a new comment carrying the correction, with the original left in place
+ * underneath for history - the same effect as an edit, honestly labeled. */
+function CommentItem({ storyId, comment }: { storyId: string; comment: BeadsComment }) {
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(comment.text)
+
+  const mutation = useMutation({
+    mutationFn: (text: string) => boardApi.addComment(storyId, text),
+    onSuccess: () => {
+      setEditing(false)
+      queryClient.invalidateQueries({ queryKey: ['board', 'detail', storyId] })
+    },
+  })
+
+  const submit = () => {
+    const text = draft.trim()
+    if (!text) return
+    mutation.mutate(i18nT('apps.board.comment_edit_marker', { text }))
+  }
+
+  return (
+    <div className="border border-border rounded-lg px-3 py-2" data-testid="board-comment">
+      <div className="flex items-center gap-2 text-[11px] text-muted mb-1">
+        <span className="font-medium text-text">{comment.author}</span>
+        <span>{comment.created_at}</span>
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => { setDraft(comment.text); setEditing(true) }}
+            className="ml-auto text-muted hover:text-text cursor-pointer opacity-60 hover:opacity-100"
+            data-testid="board-comment-edit-start"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="flex flex-col gap-2" data-testid="board-comment-edit">
+          <textarea
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            rows={3}
+            className="w-full px-2 py-1.5 text-[13px] rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent resize-y"
+            data-testid="board-comment-edit-input"
+            autoFocus
+          />
+          <div className="text-[11px] text-muted">{i18nT('apps.board.comment_edit_hint')}</div>
+          {mutation.isError && <span className="text-[11px] text-danger">{String(mutation.error)}</span>}
+          <div className="flex items-center gap-2 self-end">
+            <button type="button" onClick={() => setEditing(false)} className="text-[12px] text-muted hover:text-text cursor-pointer px-2 py-1">
+              {i18nT('apps.board.edit_cancel')}
+            </button>
+            <button
+              type="button"
+              disabled={!draft.trim() || mutation.isPending}
+              onClick={submit}
+              className="flex items-center gap-1 text-[12px] py-1 px-3 rounded-md bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50 cursor-pointer"
+              data-testid="board-comment-edit-save"
+            >
+              <Check size={12} />
+              {i18nT('apps.board.edit_save')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-[13px]">
+          <MarkdownRenderer content={comment.text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OpenQuestionsPanel({ storyId, questions }: { storyId: string; questions: ParsedQuestion[] }) {
   const queryClient = useQueryClient()
   const [answers, setAnswers] = useState<Record<number, string>>({})
@@ -362,14 +440,62 @@ export default function StoryModal({ story, phases, onClose }: {
     [detail],
   )
 
+  const queryClient = useQueryClient()
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [descriptionDraft, setDescriptionDraft] = useState('')
+
+  const updateMutation = useMutation({
+    mutationFn: (fields: { title?: string; description?: string }) => boardApi.updateStory(story.id, fields),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['board', 'detail', story.id] })
+      queryClient.invalidateQueries({ queryKey: ['board', 'stories'] })
+    },
+  })
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="board-timeline-drawer">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full max-w-[1280px] max-h-[94vh] bg-bg border border-border-strong rounded-xl flex flex-col shadow-lg">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <div>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border gap-3">
+          <div className="min-w-0 flex-1">
             <div className="text-[11px] text-muted">{story.epic_title}</div>
-            <div className="text-[16px] font-semibold text-text">{story.title}</div>
+            {editingTitle ? (
+              <div className="flex items-center gap-2 mt-0.5" data-testid="board-title-edit">
+                <input
+                  value={titleDraft}
+                  onChange={e => setTitleDraft(e.target.value)}
+                  className="flex-1 min-w-0 px-2 py-1 text-[16px] font-semibold rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent"
+                  data-testid="board-title-input"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  disabled={!titleDraft.trim() || updateMutation.isPending}
+                  onClick={() => updateMutation.mutate({ title: titleDraft.trim() }, { onSuccess: () => setEditingTitle(false) })}
+                  className="text-accent hover:text-accent-hover cursor-pointer disabled:opacity-50"
+                  data-testid="board-title-save"
+                >
+                  <Check size={16} />
+                </button>
+                <button type="button" onClick={() => setEditingTitle(false)} className="text-muted hover:text-text cursor-pointer" data-testid="board-title-cancel">
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 group">
+                <div className="text-[16px] font-semibold text-text">{detail?.title ?? story.title}</div>
+                <button
+                  type="button"
+                  onClick={() => { setTitleDraft(detail?.title ?? story.title); setEditingTitle(true) }}
+                  className="text-muted hover:text-text cursor-pointer opacity-60 hover:opacity-100"
+                  data-testid="board-title-edit-start"
+                >
+                  <Pencil size={12} />
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-1.5">
               <Badge variant="muted" className="text-[10px]">{story.phase_label}</Badge>
               {detail?.status && <Badge variant="muted" className="text-[10px]">{detail.status}</Badge>}
@@ -385,12 +511,52 @@ export default function StoryModal({ story, phases, onClose }: {
           {detailQuery.error && <ErrorNotice message={String(detailQuery.error)} />}
 
           <section>
-            <div className="text-[12px] font-medium text-muted mb-2">{i18nT('apps.board.description_title')}</div>
-            <div className="text-[13px]" data-testid="board-description">
-              {detail?.description ? <MarkdownRenderer content={detail.description} /> : (
-                <span className="text-muted">{i18nT('apps.board.no_description')}</span>
+            <div className="flex items-center gap-1.5 mb-2">
+              <div className="text-[12px] font-medium text-muted">{i18nT('apps.board.description_title')}</div>
+              {!editingDescription && (
+                <button
+                  type="button"
+                  onClick={() => { setDescriptionDraft(detail?.description ?? ''); setEditingDescription(true) }}
+                  className="text-muted hover:text-text cursor-pointer opacity-60 hover:opacity-100"
+                  data-testid="board-description-edit-start"
+                >
+                  <Pencil size={11} />
+                </button>
               )}
             </div>
+            {editingDescription ? (
+              <div className="flex flex-col gap-2" data-testid="board-description-edit">
+                <textarea
+                  value={descriptionDraft}
+                  onChange={e => setDescriptionDraft(e.target.value)}
+                  rows={8}
+                  className="w-full px-3 py-2 text-[13px] font-mono rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent resize-y"
+                  data-testid="board-description-input"
+                  autoFocus
+                />
+                <div className="flex items-center gap-2 self-end">
+                  <button type="button" onClick={() => setEditingDescription(false)} className="text-[12px] text-muted hover:text-text cursor-pointer px-2 py-1">
+                    {i18nT('apps.board.edit_cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={updateMutation.isPending}
+                    onClick={() => updateMutation.mutate({ description: descriptionDraft }, { onSuccess: () => setEditingDescription(false) })}
+                    className="flex items-center gap-1 text-[12px] py-1 px-3 rounded-md bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50 cursor-pointer"
+                    data-testid="board-description-save"
+                  >
+                    <Check size={12} />
+                    {i18nT('apps.board.edit_save')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[13px]" data-testid="board-description">
+                {detail?.description ? <MarkdownRenderer content={detail.description} /> : (
+                  <span className="text-muted">{i18nT('apps.board.no_description')}</span>
+                )}
+              </div>
+            )}
           </section>
 
           {pendingQuestions && (
@@ -405,15 +571,7 @@ export default function StoryModal({ story, phases, onClose }: {
             </div>
             <div className="flex flex-col gap-2 mb-3">
               {(detail?.comments ?? []).map(c => (
-                <div key={c.id} className="border border-border rounded-lg px-3 py-2" data-testid="board-comment">
-                  <div className="flex items-center gap-2 text-[11px] text-muted mb-1">
-                    <span className="font-medium text-text">{c.author}</span>
-                    <span>{c.created_at}</span>
-                  </div>
-                  <div className="text-[13px]">
-                    <MarkdownRenderer content={c.text} />
-                  </div>
-                </div>
+                <CommentItem key={c.id} storyId={story.id} comment={c} />
               ))}
             </div>
             <CommentComposer storyId={story.id} />

@@ -5447,7 +5447,11 @@
       "open_questions_hint": "Répondez ci-dessous puis envoyez – pas besoin d'écrire un commentaire complet.",
       "open_questions_answer_placeholder": "Votre réponse…",
       "open_questions_submit": "Envoyer les réponses",
-      "open_questions_skip_note": "Laissez vide pour ignorer une question."
+      "open_questions_skip_note": "Laissez vide pour ignorer une question.",
+      "edit_cancel": "Annuler",
+      "edit_save": "Enregistrer",
+      "comment_edit_hint": "Enregistré comme un nouveau commentaire — les commentaires beads ne peuvent pas être modifiés après coup, l'original reste donc visible ci-dessous pour l'historique.",
+      "comment_edit_marker": "_(modifié)_\n\n{{text}}"
     }
   },
   "autoImprovement": {

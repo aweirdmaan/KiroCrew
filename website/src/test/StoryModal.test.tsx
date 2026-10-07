@@ -16,6 +16,7 @@ vi.mock('../apps/board/boardApi', async () => {
       run: vi.fn(),
       advance: vi.fn(),
       addComment: vi.fn(),
+      updateStory: vi.fn(),
     },
   }
 })
@@ -237,6 +238,53 @@ describe('StoryModal', () => {
       's-1',
       'Answers to the open questions:\n\n1. Yes, Python is fine',
     ));
+  });
+
+  it('edits the title and saves it via updateStory', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-title-edit-start')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('board-title-edit-start'));
+    fireEvent.change(screen.getByTestId('board-title-input'), { target: { value: 'Renamed story' } });
+    fireEvent.click(screen.getByTestId('board-title-save'));
+
+    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { title: 'Renamed story' }));
+  });
+
+  it('edits the description and saves it via updateStory', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-description-edit-start')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('board-description-edit-start'));
+    fireEvent.change(screen.getByTestId('board-description-input'), { target: { value: 'Updated description' } });
+    fireEvent.click(screen.getByTestId('board-description-save'));
+
+    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { description: 'Updated description' }));
+  });
+
+  it('"edits" a comment by posting a correction comment, leaving the original in place', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.addComment).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-comment-edit-start')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('board-comment-edit-start'));
+    fireEvent.change(screen.getByTestId('board-comment-edit-input'), { target: { value: 'corrected text' } });
+    fireEvent.click(screen.getByTestId('board-comment-edit-save'));
+
+    await waitFor(() => expect(boardApi.addComment).toHaveBeenCalledWith('s-1', '_(edited)_\n\ncorrected text'));
+    // the original comment is still rendered, not replaced
+    expect(screen.getByText('first comment')).toBeInTheDocument();
   });
 
   it('closing the modal calls onClose', async () => {
