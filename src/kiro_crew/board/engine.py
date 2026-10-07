@@ -323,7 +323,7 @@ async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -
 
     phase_key = await board_state.get_phase(project_path, story_id)
     if phase_key is None:
-        phase_key = next_phase_key(None)  # "planning" - leaving backlog
+        phase_key = next_phase_key(None)  # "pipeline" - leaving backlog
         await board_state.set_phase(project_path, story_id, phase_key)
 
     phase = PHASE_BY_KEY.get(phase_key)

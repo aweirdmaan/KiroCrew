@@ -1,14 +1,14 @@
 {
   "name": "board",
   "version": "0.1.0",
-  "displayName": "Board",
-  "description": "Moves a beads story through a 9-column pipeline (Grooming → Planning → Plan Review → Approval → Implementation → Verification → PR → Review → Done), one crew-rocket skill per job, with a live log and a per-story timeline. Configure projects via knowledge.beads_project_paths.",
+  "displayName": "Timeline",
+  "description": "Schedules beads stories on a Jira-style timeline, each with its own single-DAG pipeline (ideate through retro) that pauses for a human wherever a gate needs one - answer OPEN QUESTIONS, approve, or fix a break - and resumes correctly once they act. Configure projects via knowledge.beads_project_paths.",
   "author": "kirocrew",
   "license": "MIT",
   "tags": [
     "beads",
     "workflow",
-    "kanban",
+    "timeline",
     "task-runner"
   ],
   "defaultEnabled": true,
@@ -23,13 +23,13 @@
     "pages": [
       {
         "route": "/board",
-        "label": "Board",
-        "icon": "KanbanSquare"
+        "label": "Timeline",
+        "icon": "CalendarRange"
       }
     ]
   },
   "useCases": [
-    "Run a beads story through grooming, planning, implementation, verification, PR, and review without leaving the dashboard.",
-    "See every story's current phase on one board, and its full job-run history (with live logs) in a timeline drawer."
+    "Schedule and reorder beads stories on a timeline, by week or by quarter, without leaving the dashboard.",
+    "Run a story's whole pipeline - ideate through retro - as one DAG, and see at a glance which stories need you (an answer, an approval, a fix) and which are just running."
   ]
 }

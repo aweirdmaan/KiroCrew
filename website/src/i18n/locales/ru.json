@@ -5501,7 +5501,7 @@
       }
     },
     "board": {
-      "title": "Доска",
+      "title": "Хронология",
       "backlog_column": "Бэклог",
       "no_stories": "Нет историй",
       "no_projects_configured": "Пути проектов beads не настроены. Укажите knowledge.beads_project_paths, чтобы увидеть истории здесь.",
@@ -5547,7 +5547,10 @@
       "needs_human_gate_failed": "Требует внимания",
       "needs_human_manual_review": "Готово к вашей проверке",
       "mr_url_placeholder": "Ссылка на MR/PR…",
-      "status_cancelled": "Отменено"
+      "status_cancelled": "Отменено",
+      "zoom_week": "Неделя",
+      "zoom_quarter": "Квартал",
+      "schedule_story": "Запланировать"
     }
   },
   "autoImprovement": {

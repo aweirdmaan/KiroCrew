@@ -5321,7 +5321,7 @@
       }
     },
     "board": {
-      "title": "বোর্ড",
+      "title": "টাইমলাইন",
       "backlog_column": "ব্যাকলগ",
       "no_stories": "কোনো স্টোরি নেই",
       "no_projects_configured": "কোনো beads প্রজেক্ট পাথ কনফিগার করা নেই। এখানে স্টোরি দেখতে knowledge.beads_project_paths সেট করুন।",
@@ -5367,7 +5367,10 @@
       "needs_human_gate_failed": "মনোয়োগ প্রয়োজন",
       "needs_human_manual_review": "আপনার পর্যালোচনার জন্য প্রস্তুত",
       "mr_url_placeholder": "MR/PR ইউআরএল…",
-      "status_cancelled": "বাতিল করা হয়েছে"
+      "status_cancelled": "বাতিল করা হয়েছে",
+      "zoom_week": "সপ্তাহ",
+      "zoom_quarter": "প্রন্তৈমাসিক",
+      "schedule_story": "নির্ধারিত করুন"
     }
   },
   "autoImprovement": {

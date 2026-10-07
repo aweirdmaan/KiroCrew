@@ -5411,7 +5411,7 @@
       }
     },
     "board": {
-      "title": "Bacheca",
+      "title": "Cronologia",
       "backlog_column": "Arretrato",
       "no_stories": "Nessuna storia",
       "no_projects_configured": "Nessun percorso di progetto beads configurato. Imposta knowledge.beads_project_paths per vedere le storie qui.",
@@ -5457,7 +5457,10 @@
       "needs_human_gate_failed": "Richiede attenzione",
       "needs_human_manual_review": "Pronta per la tua revisione",
       "mr_url_placeholder": "URL della MR/PR…",
-      "status_cancelled": "Annullato"
+      "status_cancelled": "Annullato",
+      "zoom_week": "Settimana",
+      "zoom_quarter": "Trimestre",
+      "schedule_story": "Pianifica"
     }
   },
   "autoImprovement": {

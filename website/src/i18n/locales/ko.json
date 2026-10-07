@@ -5231,7 +5231,7 @@
       }
     },
     "board": {
-      "title": "보드",
+      "title": "타임라인",
       "backlog_column": "백로그",
       "no_stories": "스토리 없음",
       "no_projects_configured": "구성된 beads 프로젝트 경로가 없습니다. knowledge.beads_project_paths를 설정하면 여기에 스토리가 표시됩니다.",
@@ -5277,7 +5277,10 @@
       "needs_human_gate_failed": "주의가 필요합니다",
       "needs_human_manual_review": "검토 준비가 되었습니다",
       "mr_url_placeholder": "MR/PR 링크…",
-      "status_cancelled": "취소됨"
+      "status_cancelled": "취소됨",
+      "zoom_week": "주",
+      "zoom_quarter": "분기",
+      "schedule_story": "일정 설정"
     }
   },
   "autoImprovement": {

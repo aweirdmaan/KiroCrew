@@ -16,9 +16,9 @@ async function coreGet<T>(path: string): Promise<T> {
   return r.json() as Promise<T>
 }
 
-async function corePost<T>(path: string, body?: unknown): Promise<T> {
+async function corePost<T>(path: string, body?: unknown, method: 'POST' | 'DELETE' = 'POST'): Promise<T> {
   const r = await fetch(`${CORE_API_BASE}${path}`, {
-    method: 'POST',
+    method,
     credentials: 'same-origin',
     ...(body !== undefined
       ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
@@ -26,7 +26,7 @@ async function corePost<T>(path: string, body?: unknown): Promise<T> {
   })
   if (!r.ok) {
     const errBody = await r.json().catch(() => null)
-    throw new Error(errBody?.error || `POST ${path} → ${r.status}`)
+    throw new Error(errBody?.error || `${method} ${path} → ${r.status}`)
   }
   return r.json() as Promise<T>
 }
@@ -61,6 +61,10 @@ export interface BoardStory {
   priority: number | null
   owner: string
   pending_open_questions: boolean
+  start_date: string | null
+  due_date: string | null
+  rank: number | null
+  depends_on: string[]
 }
 
 export interface StoryHistory {
@@ -86,6 +90,18 @@ export interface StoryDetail {
   created_at: string
   updated_at: string
   comments: BeadsComment[]
+  start_date: string | null
+  due_date: string | null
+  rank: number | null
+  depends_on: string[]
+}
+
+export interface UpdateStoryFields {
+  title?: string
+  description?: string
+  start_date?: string
+  due_date?: string
+  rank?: number
 }
 
 export const boardApi = {
@@ -98,6 +114,13 @@ export const boardApi = {
     corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/advance`, { mr_url: mrUrl }),
   addComment: (storyId: string, text: string) =>
     corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/comments`, { text }),
-  updateStory: (storyId: string, fields: { title?: string; description?: string }) =>
+  updateStory: (storyId: string, fields: UpdateStoryFields) =>
     corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/update`, fields),
+  addDependency: (storyId: string, dependsOnId: string) =>
+    corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/dependencies`, { depends_on_id: dependsOnId }),
+  removeDependency: (storyId: string, dependsOnId: string) =>
+    corePost<{ ok: boolean }>(
+      `/stories/${encodeURIComponent(storyId)}/dependencies/${encodeURIComponent(dependsOnId)}`,
+      undefined, 'DELETE',
+    ),
 }

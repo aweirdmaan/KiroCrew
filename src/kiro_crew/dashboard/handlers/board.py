@@ -76,6 +76,8 @@ async def list_board_stories(request: web.Request) -> web.Response:
                 "current_run": story.current_run,
                 "priority": story.priority, "owner": story.owner,
                 "pending_open_questions": story.pending_open_questions,
+                "start_date": story.start_date, "due_date": story.due_date,
+                "rank": story.rank, "depends_on": story.depends_on,
             })
     return web.json_response({"stories": all_stories, "project_paths": project_paths})
 
@@ -173,11 +175,13 @@ async def add_story_comment(request: web.Request) -> web.Response:
 
 
 async def update_story_route(request: web.Request) -> web.Response:
-    """POST /api/board/stories/{id}/update — edit the card's title/description.
-    Body: {"title"?: "...", "description"?: "..."}, at least one required.
-    Unlike comments (append-only in beads, see add_story_comment's sibling
-    "edit" in the frontend), issue fields are plain mutable columns via
-    `bd update`, so this is a real in-place edit."""
+    """POST /api/board/stories/{id}/update — edit the card itself. Body:
+    {"title"?, "description"?, "start_date"?, "due_date"?, "rank"?}, at
+    least one required. Unlike comments (append-only in beads, see
+    add_story_comment's sibling "edit" in the frontend), issue fields are
+    plain mutable columns via `bd update`, so this is a real in-place edit -
+    including the timeline's own scheduling fields (see stories.py's module
+    comment for where those actually live in beads)."""
     story_id = request.match_info["id"]
     project_path = await _find_story_project(story_id)
     if project_path is None:
@@ -188,15 +192,61 @@ async def update_story_route(request: web.Request) -> web.Response:
     assert body is not None
     title = body.get("title")
     description = body.get("description")
+    start_date = body.get("start_date")
+    due_date = body.get("due_date")
+    rank = body.get("rank")
     if title is not None and (not isinstance(title, str) or not title.strip()):
         return web.json_response({"error": "title cannot be blank", "code": "empty_title"}, status=400)
     if description is not None and not isinstance(description, str):
         return web.json_response({"error": "description must be a string", "code": "bad_description"}, status=400)
-    if title is None and description is None:
+    if start_date is not None and not isinstance(start_date, str):
+        return web.json_response({"error": "start_date must be a string", "code": "bad_start_date"}, status=400)
+    if due_date is not None and not isinstance(due_date, str):
+        return web.json_response({"error": "due_date must be a string", "code": "bad_due_date"}, status=400)
+    if rank is not None and not isinstance(rank, (int, float)):
+        return web.json_response({"error": "rank must be a number", "code": "bad_rank"}, status=400)
+    if title is None and description is None and start_date is None and due_date is None and rank is None:
         return web.json_response({"error": "nothing to update", "code": "empty_update"}, status=400)
-    ok = await board_detail.update_story(project_path, story_id, title=title, description=description)
+    ok = await board_detail.update_story(
+        project_path, story_id, title=title, description=description,
+        start_date=start_date, due_date=due_date, rank=rank,
+    )
     if not ok:
         return web.json_response({"error": "bd update failed", "code": "bd_unavailable"}, status=502)
+    return web.json_response({"ok": True})
+
+
+async def add_dependency_route(request: web.Request) -> web.Response:
+    """POST /api/board/stories/{id}/dependencies — body: {"depends_on_id":
+    "..."}. Draws the timeline's dependency arrow from this story to
+    another; `story_id` depends on (is blocked by) `depends_on_id`."""
+    story_id = request.match_info["id"]
+    project_path = await _find_story_project(story_id)
+    if project_path is None:
+        return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
+    body, body_err = await read_bounded_json(request, max_bytes=64_000)
+    if body_err is not None:
+        return body_err
+    assert body is not None
+    depends_on_id = body.get("depends_on_id", "")
+    if not isinstance(depends_on_id, str) or not depends_on_id.strip():
+        return web.json_response({"error": "depends_on_id required", "code": "empty_depends_on_id"}, status=400)
+    ok = await board_detail.add_dependency(project_path, story_id, depends_on_id)
+    if not ok:
+        return web.json_response({"error": "bd dep add failed", "code": "bd_unavailable"}, status=502)
+    return web.json_response({"ok": True})
+
+
+async def remove_dependency_route(request: web.Request) -> web.Response:
+    """DELETE /api/board/stories/{id}/dependencies/{depends_on_id}"""
+    story_id = request.match_info["id"]
+    depends_on_id = request.match_info["depends_on_id"]
+    project_path = await _find_story_project(story_id)
+    if project_path is None:
+        return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
+    ok = await board_detail.remove_dependency(project_path, story_id, depends_on_id)
+    if not ok:
+        return web.json_response({"error": "bd dep remove failed", "code": "bd_unavailable"}, status=502)
     return web.json_response({"ok": True})
 
 
@@ -209,3 +259,5 @@ def setup_board_routes(app: web.Application) -> None:
     app.router.add_get("/api/board/stories/{id}/detail", get_story_detail_route)
     app.router.add_post("/api/board/stories/{id}/comments", add_story_comment)
     app.router.add_post("/api/board/stories/{id}/update", update_story_route)
+    app.router.add_post("/api/board/stories/{id}/dependencies", add_dependency_route)
+    app.router.add_delete("/api/board/stories/{id}/dependencies/{depends_on_id}", remove_dependency_route)

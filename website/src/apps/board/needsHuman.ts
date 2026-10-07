@@ -1,9 +1,9 @@
 /**
- * Every point in the board's pipeline where a card cannot move on its own
- * and is genuinely waiting on a person - shared between BoardPage's card
- * list (where `pendingOpenQuestions` is the cheap `story.pending_open_questions`
- * flag the backend only computes for Implementation-phase stories, since
- * that's the only phase it can still be true for - see stories.py) and
+ * Every point in the pipeline where a story cannot move on its own and is
+ * genuinely waiting on a person - shared between TimelinePage's row list
+ * (where `pendingOpenQuestions` is the cheap `story.pending_open_questions`
+ * flag the backend only computes for pipeline-phase stories, since that's
+ * the only phase it can still be true for - see stories.py) and
  * StoryModal's detail view (where it's the modal's own, fully-parsed
  * `findPendingOpenQuestions(detail.comments)` result, which is strictly more
  * authoritative since it has read every comment, not just checked a flag).

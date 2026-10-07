@@ -5321,7 +5321,7 @@
       }
     },
     "board": {
-      "title": "बोर्ड",
+      "title": "टाइमलाइन",
       "backlog_column": "बैकलॉग",
       "no_stories": "कोई कहानी नहीं",
       "no_projects_configured": "कोई beads प्रोजेक्ट पथ कॉन्फ़िगर नहीं है। यहाँ कहानियाँ देखने के लिए knowledge.beads_project_paths सेट करें।",
@@ -5367,7 +5367,10 @@
       "needs_human_gate_failed": "ध्यान देने की आवश्यकता है",
       "needs_human_manual_review": "आपकी समीक्षा के लिए तैयार",
       "mr_url_placeholder": "MR/PR यूआरएल…",
-      "status_cancelled": "रद्द कर दिया गया"
+      "status_cancelled": "रद्द कर दिया गया",
+      "zoom_week": "सप्ताह",
+      "zoom_quarter": "तिमाही",
+      "schedule_story": "अनुसूचित करें"
     }
   },
   "autoImprovement": {

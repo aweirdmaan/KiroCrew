@@ -5231,7 +5231,7 @@
       }
     },
     "board": {
-      "title": "看板",
+      "title": "时间轴",
       "backlog_column": "待办",
       "no_stories": "暂无故事",
       "no_projects_configured": "未配置 beads 项目路径。设置 knowledge.beads_project_paths 以在此查看故事。",
@@ -5277,7 +5277,10 @@
       "needs_human_gate_failed": "需要关注",
       "needs_human_manual_review": "已准备好等待审核",
       "mr_url_placeholder": "MR/PR 链接…",
-      "status_cancelled": "已取消"
+      "status_cancelled": "已取消",
+      "zoom_week": "周",
+      "zoom_quarter": "季度",
+      "schedule_story": "安排日程"
     }
   },
   "autoImprovement": {

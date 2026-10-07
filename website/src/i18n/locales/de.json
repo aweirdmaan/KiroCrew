@@ -5321,7 +5321,7 @@
       }
     },
     "board": {
-      "title": "Board",
+      "title": "Zeitachse",
       "backlog_column": "Rückstand",
       "no_stories": "Keine Storys",
       "no_projects_configured": "Keine Beads-Projektpfade konfiguriert. Setze knowledge.beads_project_paths, um Storys hier zu sehen.",
@@ -5367,7 +5367,10 @@
       "needs_human_gate_failed": "Erfordert Aufmerksamkeit",
       "needs_human_manual_review": "Bereit für deine Prüfung",
       "mr_url_placeholder": "MR/PR-URL…",
-      "status_cancelled": "Abgebrochen"
+      "status_cancelled": "Abgebrochen",
+      "zoom_week": "Woche",
+      "zoom_quarter": "Quartal",
+      "schedule_story": "Terminieren"
     }
   },
   "autoImprovement": {

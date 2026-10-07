@@ -1,4 +1,4 @@
-"""The board's columns, matched 1:1 to the REAL pipeline in crew-rocket's
+"""The story's pipeline, matched 1:1 to the REAL one in crew-rocket's
 ``scripts/rocket-dag.sh`` and ``.kiro/workflows/*.yaml`` - not a reinvention
 of it. Those files are never read or modified by this engine (it renders
 its own throwaway YAML per task - see ``engine.py``); this module exists so
@@ -6,13 +6,11 @@ the two never drift apart in SHAPE either. Three facts drove this layout,
 each confirmed by reading the canonical files directly rather than assumed:
 
 1. ``.kiro/workflows/rocket-plan.yaml`` already runs ``ideate`` then ``plan``
-   as two dependent agents in ONE Task Runner submission - "Planning" merges
-   them the same way, not as two separate board columns.
+   as two dependent agents in ONE Task Runner submission.
 2. ``rocket-dag.sh``'s ``cmd_implement`` runs confirm-plan, approval-check,
    the implement loop, verify, fix, confirm, pr, and retro as one unattended
    shell function, each step gated on the previous step's own
-   ``GATE: PASS`` beads comment where one exists - "Implementation" merges
-   all eight the same way.
+   ``GATE: PASS`` beads comment where one exists.
 3. ``cmd_implement`` has NO per-step resume state: every rerun (e.g. after a
    gate failure) restarts the whole function from confirm-plan. It relies on
    each gated skill being safe to re-invoke - confirm-plan's own SKILL.md
@@ -21,6 +19,15 @@ each confirmed by reading the canonical files directly rather than assumed:
    through. That is what makes this idempotent - a human answering the
    OPEN QUESTIONS and clicking "Run next job" again just works, the same
    way rerunning ``rocket-dag.sh implement <epic>`` by hand always has.
+
+All ten automated tasks - ideate through retro - live in ONE "pipeline" job
+now (previously split across "Planning"/"Implementation" board columns, back
+when the UI was a kanban board). The timeline view that replaced the board
+shows this whole chain as one DAG per story, so the data model matches: one
+Task list a human can click "Run" on once and let run end to end, stopping
+on its own wherever a gate needs them (OPEN QUESTIONS, approval, a failed
+confirm) and resuming correctly - see the module docstring above - once
+they've acted.
 
 ``rocket-dag.sh`` itself runs retro automatically, right after `pr`, before
 any human has reviewed the MR - the human-facing post-review step is
@@ -59,7 +66,9 @@ class Task:
 
 @dataclass(frozen=True)
 class Phase:
-    """One board column."""
+    """One stage a story moves through. Only "pipeline" actually runs tasks
+    automatically now - "review" and "done" are manual-only markers (see
+    Phase.manual)."""
 
     key: str
     label: str
@@ -73,21 +82,15 @@ class Phase:
 
 PHASES: tuple[Phase, ...] = (
     Phase(
-        key="planning",
-        label="Planning",
+        key="pipeline",
+        label="Pipeline",
         tasks=(
             Task(key="ideate", skill="rocket-ideate", agent="meowth"),
+            # No gate here: rocket-plan ends in OPEN QUESTIONS, answered as a
+            # beads comment by a human. Nothing checks for that answer until
+            # confirm_plan's own gate below - exactly like rocket-dag.sh's
+            # cmd_plan/cmd_implement split, just no longer a separate column.
             Task(key="plan", skill="rocket-plan", agent="meowth"),
-        ),
-        # No gate: rocket-plan ends in OPEN QUESTIONS, answered as a beads
-        # comment by a human. Nothing here checks for that answer - the
-        # very first task of Implementation (confirm-plan) does, exactly
-        # like rocket-dag.sh's own cmd_plan/cmd_implement split.
-    ),
-    Phase(
-        key="implementation",
-        label="Implementation",
-        tasks=(
             Task(key="confirm_plan", skill="rocket-confirm-plan", agent="meowth", gate=True),
             Task(key="approval_check", skill="rocket-approval-check", agent="meowth", gate=True),
             Task(key="implement", skill="rocket-implement", agent="james",
@@ -106,7 +109,7 @@ PHASES: tuple[Phase, ...] = (
 PHASE_BY_KEY: dict[str, Phase] = {p.key: p for p in PHASES}
 PHASE_ORDER: tuple[str, ...] = tuple(p.key for p in PHASES)
 
-# Not a board column - the one-off task the engine runs when a human marks a
+# Not part of PHASES - the one-off task the engine runs when a human marks a
 # story reviewed (Review -> Done), matching rocket-dag.sh's separate
 # `cmd_harvest` (run by a human after reading the MR, with its URL - unlike
 # every other task here, this one needs an argument beyond the story id).

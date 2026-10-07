@@ -5231,7 +5231,7 @@
       }
     },
     "board": {
-      "title": "ボード",
+      "title": "タイムライン",
       "backlog_column": "バックログ",
       "no_stories": "ストーリーなし",
       "no_projects_configured": "beadプロジェクトパスが設定されていません。knowledge.beads_project_pathsを設定するとここにストーリーが表示されます。",
@@ -5277,7 +5277,10 @@
       "needs_human_gate_failed": "対応が必要です",
       "needs_human_manual_review": "レビュー待ちです",
       "mr_url_placeholder": "MR/PRのURL…",
-      "status_cancelled": "キャンセルされました"
+      "status_cancelled": "キャンセルされました",
+      "zoom_week": "週",
+      "zoom_quarter": "四半期",
+      "schedule_story": "予定を設定"
     }
   },
   "autoImprovement": {

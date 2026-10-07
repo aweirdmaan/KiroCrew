@@ -158,13 +158,13 @@ def _patch_run_bd(beads):
 
 class TestRunJobBasics:
     @pytest.mark.asyncio
-    async def test_backlog_story_starts_at_planning(self, tmp_path, beads):
+    async def test_backlog_story_starts_at_pipeline(self, tmp_path, beads):
         tr = FakeTaskRunner()
         task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         assert task_id == tr.last_task_id
         assert "rocket-ideate" in tr.submissions[0]["content"]
         assert tr.submissions[0]["agent"] == "meowth"
-        assert beads.labels["s-1"] == {"phase:planning"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
 
     @pytest.mark.asyncio
     async def test_second_call_while_running_is_idempotent(self, tmp_path, beads):
@@ -182,35 +182,36 @@ class TestRunJobBasics:
             await board_engine.run_job(tr, str(tmp_path), "s-1")
 
 
-class TestPlanningPhase:
+class TestPipelinePhaseStart:
     @pytest.mark.asyncio
     async def test_ideate_auto_chains_to_plan_no_gate(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:planning"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         ideate_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         tr.set_result(ideate_id, "passed", "epic created")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:planning"}  # unchanged - still mid-phase
+        assert beads.labels["s-1"] == {"phase:pipeline"}  # unchanged - still mid-phase
         assert len(tr.submissions) == 2
         assert "rocket-plan" in tr.submissions[1]["content"]
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["current_run"]["task_key"] == "plan"
 
     @pytest.mark.asyncio
-    async def test_plan_finishing_advances_to_implementation_even_unanswered(self, tmp_path, beads):
-        # Planning itself has no gate - rocket-plan ends in OPEN QUESTIONS
-        # and rocket-dag.sh's cmd_plan just stops there; the gate that
-        # actually checks the questions got answered lives on
-        # Implementation's own first task (confirm_plan), not here.
+    async def test_plan_finishing_auto_chains_to_confirm_plan_even_unanswered(self, tmp_path, beads):
+        # plan itself has no gate - rocket-plan ends in OPEN QUESTIONS and
+        # rocket-dag.sh's cmd_plan just stops there as a separate command;
+        # merged into one pipeline, the gate that actually checks the
+        # questions got answered lives on confirm_plan, right after.
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:planning"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         ideate_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         tr.set_result(ideate_id, "passed", "epic created")
         await _await_inflight("s-1")
         plan_id = tr.last_task_id
         tr.set_result(plan_id, "passed", "plan posted with OPEN QUESTIONS")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
+        assert "rocket-confirm-plan" in tr.submissions[-1]["content"]
 
     @pytest.mark.asyncio
     async def test_run_level_completed_advances_even_if_the_submitted_task_itself_shows_failed(
@@ -223,7 +224,7 @@ class TestPlanningPhase:
         # stays "failed" forever, but the recovery tasks did the real work
         # and the RUN finished "completed".
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:planning"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         ideate_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         tr.set_result(ideate_id, "passed", "epic created")
         await _await_inflight("s-1")
@@ -234,18 +235,18 @@ class TestPlanningPhase:
             {"status": "passed", "result": "plan posted to beads with OPEN QUESTIONS"},
         ])
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "passed"
 
     @pytest.mark.asyncio
     async def test_failed_task_does_not_advance(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:planning"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         tr.set_result(task_id, "failed", "boom")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:planning"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "failed"
         assert data["current_run"] is None
@@ -253,71 +254,88 @@ class TestPlanningPhase:
 
 def _patched_cap(task_key: str, cap: int):
     """dataclasses.replace-free patch: Task/Phase are frozen, so swap the
-    module's PHASE_BY_KEY["implementation"] entry for a copy whose matching
+    module's PHASE_BY_KEY["pipeline"] entry for a copy whose matching
     task has a lower loop_cap, for exactly one test's duration."""
     import dataclasses
 
-    original = PHASE_BY_KEY["implementation"]
+    original = PHASE_BY_KEY["pipeline"]
     new_tasks = tuple(
         dataclasses.replace(t, loop_cap=cap) if t.key == task_key else t
         for t in original.tasks
     )
     patched = dataclasses.replace(original, tasks=new_tasks)
-    return patch.dict(PHASE_BY_KEY, {"implementation": patched})
+    return patch.dict(PHASE_BY_KEY, {"pipeline": patched})
 
 
 class TestImplementationPhase:
+    async def _reach_confirm_plan(self, tr: FakeTaskRunner, beads: FakeBeads, tmp_path) -> str:
+        """Drives a fresh story through ideate -> plan, up to (not
+        including) confirm_plan's own result - every test below cares about
+        confirm_plan onward, not the already-covered ideate/plan handoff."""
+        beads.labels["s-1"] = {"phase:pipeline"}
+        ideate_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
+        tr.set_result(ideate_id, "passed", "epic created")
+        await _await_inflight("s-1")
+        plan_id = tr.last_task_id
+        tr.set_result(plan_id, "passed", "plan posted with OPEN QUESTIONS")
+        await _await_inflight("s-1")
+        return tr.last_task_id  # confirm_plan's task_id
+
     @pytest.mark.asyncio
     async def test_confirm_plan_gate_fail_stops_in_place(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
-        task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
-        assert "rocket-confirm-plan" in tr.submissions[0]["content"]
+        task_id = await self._reach_confirm_plan(tr, beads, tmp_path)
+        assert "rocket-confirm-plan" in tr.submissions[-1]["content"]
         beads.gate("s-1", "FAIL", "unanswered question")
         tr.set_result(task_id, "passed", "ran confirm-plan")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}  # unchanged
+        assert beads.labels["s-1"] == {"phase:pipeline"}  # unchanged
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "gate_failed"
         assert data["current_run"] is None
 
     @pytest.mark.asyncio
-    async def test_rerun_after_gate_fail_restarts_from_confirm_plan_not_mid_phase(self, tmp_path, beads):
+    async def test_rerun_after_gate_fail_restarts_from_ideate_not_mid_pipeline(self, tmp_path, beads):
         # The idempotency guarantee: a human answers the questions, then
-        # clicks "Run next job" again - this must resubmit confirm_plan
-        # (task[0] of Implementation), not resume "where it left off" at
-        # some other task, and not skip straight to approval_check either.
+        # clicks "Run next job" again - this restarts the WHOLE pipeline
+        # from ideate (task[0]), not "where it left off" at confirm_plan.
+        # ideate/plan are cheap and rerun-safe, same as rocket-dag.sh's own
+        # unattended chain has no per-step resume state either.
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
-        first_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
+        first_id = await self._reach_confirm_plan(tr, beads, tmp_path)
         beads.gate("s-1", "FAIL", "unanswered question")
         tr.set_result(first_id, "passed", "ran confirm-plan")
         await _await_inflight("s-1")
 
         beads.gate("s-1", "PASS", "plan confirmed")  # human answered, then...
         second_id = await board_engine.run_job(tr, str(tmp_path), "s-1")  # ...clicks Run again
-        assert "rocket-confirm-plan" in tr.submissions[-1]["content"]
-        tr.set_result(second_id, "passed", "ran confirm-plan")
+        assert "rocket-ideate" in tr.submissions[-1]["content"]
+        tr.set_result(second_id, "passed", "epic already exists, noted")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        plan_id = tr.last_task_id
+        tr.set_result(plan_id, "passed", "plan already confirmed, noted")
+        await _await_inflight("s-1")
+        confirm_plan_id = tr.last_task_id
+        assert "rocket-confirm-plan" in tr.submissions[-1]["content"]
+        tr.set_result(confirm_plan_id, "passed", "ran confirm-plan")
+        await _await_inflight("s-1")
+        assert beads.labels["s-1"] == {"phase:pipeline"}
         assert "rocket-approval-check" in tr.submissions[-1]["content"]
 
     @pytest.mark.asyncio
     async def test_confirm_plan_gate_pass_chains_to_approval_check(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
-        task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
+        task_id = await self._reach_confirm_plan(tr, beads, tmp_path)
         beads.gate("s-1", "PASS")
         tr.set_result(task_id, "passed", "confirmed")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
         assert "rocket-approval-check" in tr.submissions[-1]["content"]
 
     @pytest.mark.asyncio
     async def test_approval_check_gate_fail_stops(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
-        confirm_plan_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
+        confirm_plan_id = await self._reach_confirm_plan(tr, beads, tmp_path)
         beads.gate("s-1", "PASS", "plan confirmed")
         tr.set_result(confirm_plan_id, "passed", "confirmed")
         await _await_inflight("s-1")
@@ -327,15 +345,12 @@ class TestImplementationPhase:
         beads.gate("s-1", "FAIL", "no APPROVED comment yet")
         tr.set_result(approval_id, "passed", "checked approval")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "gate_failed"
 
-    @pytest.mark.asyncio
-    async def test_implement_loops_until_all_tasks_complete_then_chains_to_verify(self, tmp_path, beads):
-        tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
-        confirm_plan_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
+    async def _reach_implement(self, tr: FakeTaskRunner, beads: FakeBeads, tmp_path) -> str:
+        confirm_plan_id = await self._reach_confirm_plan(tr, beads, tmp_path)
         beads.gate("s-1", "PASS")
         tr.set_result(confirm_plan_id, "passed", "confirmed")
         await _await_inflight("s-1")
@@ -343,12 +358,16 @@ class TestImplementationPhase:
         beads.gate("s-1", "PASS", "APPROVED")
         tr.set_result(approval_id, "passed", "approved")
         await _await_inflight("s-1")
+        return tr.last_task_id  # implement's task_id
 
-        implement_id = tr.last_task_id
+    @pytest.mark.asyncio
+    async def test_implement_loops_until_all_tasks_complete_then_chains_to_verify(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        implement_id = await self._reach_implement(tr, beads, tmp_path)
         assert "rocket-implement" in tr.submissions[-1]["content"]
         tr.set_result(implement_id, "passed", "still working")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}  # still looping
+        assert beads.labels["s-1"] == {"phase:pipeline"}  # still looping
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["current_run"]["task_key"] == "implement"
         assert data["current_run"]["iteration"] == 1
@@ -364,36 +383,17 @@ class TestImplementationPhase:
     @pytest.mark.asyncio
     async def test_implement_loop_cap_exceeded_fails(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
-        confirm_plan_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
-        beads.gate("s-1", "PASS")
-        tr.set_result(confirm_plan_id, "passed", "confirmed")
-        await _await_inflight("s-1")
-        approval_id = tr.last_task_id
-        beads.gate("s-1", "PASS", "APPROVED")
-        tr.set_result(approval_id, "passed", "approved")
-        await _await_inflight("s-1")
-
+        implement_id = await self._reach_implement(tr, beads, tmp_path)
         with _patched_cap("implement", 1):
-            implement_id = tr.last_task_id
             tr.set_result(implement_id, "passed", "still working")
             await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "failed"
         assert data["current_run"] is None
 
     async def _reach_verify(self, tr: FakeTaskRunner, beads: FakeBeads, tmp_path) -> str:
-        beads.labels["s-1"] = {"phase:implementation"}
-        confirm_plan_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
-        beads.gate("s-1", "PASS")
-        tr.set_result(confirm_plan_id, "passed", "confirmed")
-        await _await_inflight("s-1")
-        approval_id = tr.last_task_id
-        beads.gate("s-1", "PASS", "APPROVED")
-        tr.set_result(approval_id, "passed", "approved")
-        await _await_inflight("s-1")
-        implement_id = tr.last_task_id
+        implement_id = await self._reach_implement(tr, beads, tmp_path)
         tr.set_result(implement_id, "passed", "ALL_TASKS_COMPLETE")
         await _await_inflight("s-1")
         return tr.last_task_id  # verify's task_id
@@ -406,7 +406,7 @@ class TestImplementationPhase:
         tr.set_result(verify_id, "passed", "found issues")
         await _await_inflight("s-1")
         assert "rocket-fix" in tr.submissions[-1]["content"]
-        assert beads.labels["s-1"] == {"phase:implementation"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
 
     @pytest.mark.asyncio
     async def test_confirm_gate_fail_stops_before_pr(self, tmp_path, beads):
@@ -423,7 +423,7 @@ class TestImplementationPhase:
         beads.gate("s-1", "FAIL", "still broken")
         tr.set_result(confirm_id, "passed", "not quite")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:implementation"}  # unchanged
+        assert beads.labels["s-1"] == {"phase:pipeline"}  # unchanged
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "gate_failed"
 
@@ -458,18 +458,18 @@ class TestTaskStateHandling:
     @pytest.mark.asyncio
     async def test_cancelled_run_is_recorded_distinctly_not_as_failed(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:planning"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         tr.set_result(task_id, "cancelled", "")
         await _await_inflight("s-1")
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "cancelled"
-        assert beads.labels["s-1"] == {"phase:planning"}
+        assert beads.labels["s-1"] == {"phase:pipeline"}
 
     @pytest.mark.asyncio
     async def test_vanished_run_is_recorded_as_missing_not_failed(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:planning"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         del tr._runs[task_id]  # simulate the run vanishing from Task Runner's own status
         await _await_inflight("s-1")
@@ -481,7 +481,7 @@ class TestReconcileStaleRunning:
     @pytest.mark.asyncio
     async def test_a_running_entry_with_no_live_watcher_is_marked_missing(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         await board_engine.run_job(tr, str(tmp_path), "s-1")
         # Simulate a process restart: the in-process watcher is just gone,
         # but the history file still says "running" from before.
@@ -494,7 +494,7 @@ class TestReconcileStaleRunning:
     @pytest.mark.asyncio
     async def test_a_genuinely_in_flight_run_is_left_alone(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         await board_engine.run_job(tr, str(tmp_path), "s-1")
         # The watcher is still live (this process submitted it moments ago).
 
@@ -505,7 +505,7 @@ class TestReconcileStaleRunning:
     @pytest.mark.asyncio
     async def test_running_next_job_self_heals_a_stale_entry_before_resubmitting(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         first_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
         board_engine._inflight.clear()  # simulate the restart
 
@@ -534,7 +534,7 @@ class TestReviewCompletion:
     @pytest.mark.asyncio
     async def test_complete_review_wrong_phase_raises(self, tmp_path, beads):
         tr = FakeTaskRunner()
-        beads.labels["s-1"] = {"phase:implementation"}
+        beads.labels["s-1"] = {"phase:pipeline"}
         with pytest.raises(board_engine.BoardError):
             await board_engine.complete_review(tr, str(tmp_path), "s-1", "https://example.com/mr/1")
 
@@ -573,8 +573,8 @@ class TestSubmitLeavesSpecFileInPlace:
         # masked the race entirely). This pins the fix directly: the file
         # must still exist and be readable after _submit returns.
         runner = _CapturingRunner()
-        task = PHASE_BY_KEY["planning"].tasks[0]
-        task_id = await board_engine._submit(runner, "/proj", "s-1", "planning", task)
+        task = PHASE_BY_KEY["pipeline"].tasks[0]
+        task_id = await board_engine._submit(runner, "/proj", "s-1", "pipeline", task)
         assert task_id == "task-x"
         assert runner.spec_path is not None
         assert os.path.exists(runner.spec_path)

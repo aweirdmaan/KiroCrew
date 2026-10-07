@@ -5411,7 +5411,7 @@
       }
     },
     "board": {
-      "title": "Quadro",
+      "title": "Linha do tempo",
       "backlog_column": "Pendentes",
       "no_stories": "Nenhuma história",
       "no_projects_configured": "Nenhum caminho de projeto beads configurado. Defina knowledge.beads_project_paths para ver histórias aqui.",
@@ -5457,7 +5457,10 @@
       "needs_human_gate_failed": "Requer atenção",
       "needs_human_manual_review": "Pronta para sua revisão",
       "mr_url_placeholder": "URL do MR/PR…",
-      "status_cancelled": "Cancelado"
+      "status_cancelled": "Cancelado",
+      "zoom_week": "Semana",
+      "zoom_quarter": "Trimestre",
+      "schedule_story": "Agendar"
     }
   },
   "autoImprovement": {

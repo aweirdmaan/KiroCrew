@@ -1458,7 +1458,7 @@
       }
     },
     "board": {
-      "title": "Board",
+      "title": "Timeline",
       "backlog_column": "Backlog",
       "no_stories": "No stories",
       "no_projects_configured": "No beads project paths configured. Set knowledge.beads_project_paths to see stories here.",
@@ -1497,7 +1497,10 @@
       "needs_human_gate_failed": "Needs attention",
       "needs_human_manual_review": "Ready for your review",
       "mr_url_placeholder": "MR/PR URL…",
-      "status_cancelled": "Cancelled"
+      "status_cancelled": "Cancelled",
+      "zoom_week": "Week",
+      "zoom_quarter": "Quarter",
+      "schedule_story": "Schedule"
     }
   },
   "components": {

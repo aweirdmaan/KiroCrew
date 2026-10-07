@@ -25,17 +25,18 @@ async def _body(resp) -> dict:
 
 class TestGetPhases:
     @pytest.mark.asyncio
-    async def test_returns_all_four_phases_in_order(self):
+    async def test_returns_all_three_phases_in_order(self):
         resp = await board_handlers.get_phases(_request("GET", "/api/board/phases"))
         data = await _body(resp)
         assert [p["key"] for p in data["phases"]] == [
-            "planning", "implementation", "review", "done",
+            "pipeline", "review", "done",
         ]
-        implementation = next(p for p in data["phases"] if p["key"] == "implementation")
-        assert implementation["tasks"] == [
-            "confirm_plan", "approval_check", "implement", "verify", "fix", "confirm", "pr", "retro",
+        pipeline = next(p for p in data["phases"] if p["key"] == "pipeline")
+        assert pipeline["tasks"] == [
+            "ideate", "plan", "confirm_plan", "approval_check", "implement",
+            "verify", "fix", "confirm", "pr", "retro",
         ]
-        assert "gate" not in implementation  # gate/loop are per-task now, not echoed at the phase level
+        assert "gate" not in pipeline  # gate/loop are per-task now, not echoed at the phase level
 
 
 class TestListStories:
@@ -50,8 +51,9 @@ class TestListStories:
     async def test_lists_stories_across_configured_projects(self):
         summary = StorySummary(
             id="s-1", title="Story", status="open", epic_id="e-1", epic_title="Epic",
-            project_path="/proj", phase="planning", phase_label="Planning", current_run=None,
+            project_path="/proj", phase="pipeline", phase_label="Pipeline", current_run=None,
             priority=1, owner="amaan", pending_open_questions=True,
+            start_date="2026-10-01", due_date="2026-10-15T00:00:00Z", rank=1.5, depends_on=["s-0"],
         )
         with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj"])), \
              patch.object(board_handlers, "list_stories", AsyncMock(return_value=[summary])):
@@ -59,8 +61,12 @@ class TestListStories:
         data = await _body(resp)
         assert data["project_paths"] == ["/proj"]
         assert data["stories"][0]["id"] == "s-1"
-        assert data["stories"][0]["phase_label"] == "Planning"
+        assert data["stories"][0]["phase_label"] == "Pipeline"
         assert data["stories"][0]["pending_open_questions"] is True
+        assert data["stories"][0]["start_date"] == "2026-10-01"
+        assert data["stories"][0]["due_date"] == "2026-10-15T00:00:00Z"
+        assert data["stories"][0]["rank"] == 1.5
+        assert data["stories"][0]["depends_on"] == ["s-0"]
 
 
 class TestRunStoryJob:
@@ -230,7 +236,25 @@ class TestUpdateStoryRoute:
             resp = await board_handlers.update_story_route(req)
         data = await _body(resp)
         assert data == {"ok": True}
-        mocked.assert_called_once_with("/proj", "s-1", title="New title", description="New body")
+        mocked.assert_called_once_with(
+            "/proj", "s-1", title="New title", description="New body",
+            start_date=None, due_date=None, rank=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_updates_timeline_scheduling_fields(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        body = {"start_date": "2026-10-01", "due_date": "2026-10-15", "rank": 2.5}
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=(body, None))), \
+             patch.object(board_handlers.board_detail, "update_story", AsyncMock(return_value=True)) as mocked:
+            resp = await board_handlers.update_story_route(req)
+        data = await _body(resp)
+        assert data == {"ok": True}
+        mocked.assert_called_once_with(
+            "/proj", "s-1", title=None, description=None,
+            start_date="2026-10-01", due_date="2026-10-15", rank=2.5,
+        )
 
     @pytest.mark.asyncio
     async def test_blank_title_is_400(self):
@@ -267,3 +291,47 @@ class TestUpdateStoryRoute:
              patch.object(board_handlers.board_detail, "update_story", AsyncMock(return_value=False)):
             resp = await board_handlers.update_story_route(req)
         assert resp.status == 502
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_rank_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"rank": "soon"}, None))):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "bad_rank"
+
+
+class TestDependencyRoutes:
+    @pytest.mark.asyncio
+    async def test_add_dependency(self):
+        req = _request("POST", "/api/board/stories/s-1/dependencies", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"depends_on_id": "s-0"}, None))), \
+             patch.object(board_handlers.board_detail, "add_dependency", AsyncMock(return_value=True)) as mocked:
+            resp = await board_handlers.add_dependency_route(req)
+        data = await _body(resp)
+        assert data == {"ok": True}
+        mocked.assert_called_once_with("/proj", "s-1", "s-0")
+
+    @pytest.mark.asyncio
+    async def test_add_dependency_empty_id_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/dependencies", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"depends_on_id": "  "}, None))):
+            resp = await board_handlers.add_dependency_route(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_remove_dependency(self):
+        req = _request(
+            "DELETE", "/api/board/stories/s-1/dependencies/s-0",
+            match_info={"id": "s-1", "depends_on_id": "s-0"},
+        )
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers.board_detail, "remove_dependency", AsyncMock(return_value=True)) as mocked:
+            resp = await board_handlers.remove_dependency_route(req)
+        data = await _body(resp)
+        assert data == {"ok": True}
+        mocked.assert_called_once_with("/proj", "s-1", "s-0")
