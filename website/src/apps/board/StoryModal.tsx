@@ -262,6 +262,11 @@ export default function StoryModal({ story, phases, onClose }: {
   const detailQuery = useQuery({
     queryKey: ['board', 'detail', story.id],
     queryFn: () => boardApi.detail(story.id),
+    // Comments live here, and a job like Planning posts its own comment
+    // (OPEN QUESTIONS) as a side effect of running - polling, same as
+    // historyQuery below, means a comment posted while this modal is
+    // already open actually shows up instead of needing a reopen.
+    refetchInterval: POLL_MS,
   })
   const historyQuery = useQuery({
     queryKey: ['board', 'history', story.id],

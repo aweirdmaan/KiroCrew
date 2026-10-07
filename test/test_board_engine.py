@@ -78,6 +78,16 @@ class FakeTaskRunner:
             "task_details": [{"status": status, "result": result}],
         }
 
+    def set_result_with_replan(self, task_id: str, run_status: str, task_details: list[dict]) -> None:
+        """Simulates Task Runner's own auto-replan: the single task this
+        engine submitted can fail mid-turn and get several recovery tasks
+        appended, with the RUN still finishing successfully even though
+        task_details[0] (the originally-submitted task) is "failed"."""
+        self._runs[task_id] = {
+            "task_id": task_id, "status": run_status, "running": False,
+            "task_details": task_details,
+        }
+
     @property
     def last_task_id(self) -> str:
         return self.submissions[-1]["task_id"]
@@ -181,6 +191,33 @@ class TestSingleTaskPhaseAdvance:
         assert beads.labels["s-1"] == {"phase:planning"}
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["current_run"] is None
+        assert data["history"][-1]["status"] == "passed"
+
+    @pytest.mark.asyncio
+    async def test_run_level_completed_advances_even_if_the_submitted_task_itself_shows_failed(
+        self, tmp_path, beads,
+    ):
+        # Regression, caught live: Task Runner can auto-replan a single
+        # submitted task into several recovery tasks after a mid-turn
+        # failure (the real case: "ACP process not running" after the
+        # machine slept). task_details[0] (the task THIS engine submitted)
+        # stays "failed" forever, but the recovery tasks did the real work
+        # and the RUN finished "completed" - including actually posting a
+        # plan + its OPEN QUESTIONS comment to beads. Reading only
+        # task_details[0] reported the job as failed, leaving the story
+        # stuck in Planning and inviting a re-run that would duplicate
+        # that comment.
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:planning"}
+        task_id = await board_engine.run_job(tr, str(tmp_path), "s-1")
+        tr.set_result_with_replan(task_id, "completed", [
+            {"status": "failed", "result": "", "error": "ACP process not running"},
+            {"status": "passed", "result": "ACP confirmed running"},
+            {"status": "passed", "result": "plan posted to beads with OPEN QUESTIONS"},
+        ])
+        await _await_inflight("s-1")
+        assert beads.labels["s-1"] == {"phase:plan_review"}
+        data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "passed"
 
     @pytest.mark.asyncio

@@ -90,17 +90,35 @@ async def _submit(
 
 
 def _task_terminal_result(task_runner: "TaskRunner", task_id: str) -> tuple[str, str] | None:
-    """(status, result_text) for *task_id*'s single task_details entry, or
-    None if the run isn't terminal yet (still "running")."""
+    """("passed"|<run status>, combined result text), or None if the run
+    isn't terminal yet (still "running").
+
+    Judges success from the RUN's own overall status, not task_details[0]:
+    Task Runner can auto-replan a single submitted task into several
+    recovery tasks when the first attempt fails mid-turn (confirmed live -
+    "ACP process not running" after the machine slept, task_details[0]
+    stayed "failed" while 5 auto-generated recovery tasks actually finished
+    the real work and the RUN itself reached "completed"). Reading only
+    task_details[0] reported the job as failed - leaving the story stuck
+    and the next "Run next job" click re-running the whole skill from
+    scratch, duplicating whatever it already posted (a real plan + its
+    OPEN QUESTIONS comment, in the run that found this). The run's own
+    status already accounts for that replan; task_details is only used
+    here for its TEXT, stitched from every task in order so an
+    ALL_TASKS_COMPLETE/gate-comment search sees what actually happened, not
+    just the first (possibly superseded) attempt.
+    """
     status = task_runner.status()
     entry = next((r for r in status["runs"] if r["task_id"] == task_id), None)
     if entry is None:
         return "missing", ""
     if entry.get("running") or entry["status"] == "running":
         return None
-    details = entry.get("task_details") or [{}]
-    detail = details[0]
-    return detail.get("status", entry["status"]), detail.get("result") or detail.get("error") or ""
+    run_status = entry["status"]
+    details = entry.get("task_details") or []
+    combined_result = "\n".join(d.get("result") or d.get("error") or "" for d in details)
+    task_status = "passed" if run_status in ("completed", "passed") else run_status
+    return task_status, combined_result
 
 
 async def _watch_and_reconcile(
