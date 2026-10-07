@@ -5271,7 +5271,8 @@
       "edit_cancel": "취소",
       "edit_save": "저장",
       "comment_edit_hint": "새 댓글로 저장됩니다 — beads 댓글은 게시 후 수정할 수 없어 원본은 기록을 위해 아래에 그대로 남습니다.",
-      "comment_edit_marker": "_(수정됨)_\n\n{{text}}"
+      "comment_edit_marker": "_(수정됨)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "autoImprovement": {

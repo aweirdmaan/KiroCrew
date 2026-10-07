@@ -59,6 +59,8 @@ export interface BoardStory {
   phase: string | null
   phase_label: string
   current_run: RunRecord | null
+  priority: number | null
+  owner: string
 }
 
 export interface StoryHistory {

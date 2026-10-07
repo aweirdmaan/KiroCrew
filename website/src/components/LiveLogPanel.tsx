@@ -76,7 +76,15 @@ export function LiveLogPanel({ taskId, active }: { taskId: string; active: boole
     return lines.filter(l => (!onlyLevel || l.level === onlyLevel) && (!q || l.text.toLowerCase().includes(q)));
   }, [lines, query, onlyLevel]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [filteredLines.length]);
+  // Scroll only this panel's own log box to its latest line, not
+  // scrollIntoView - that climbs every scrollable ancestor (the modal body,
+  // the page), which is what dragged an unrelated parent down to reveal this
+  // panel the moment it mounted, e.g. opening a board card whose Timeline
+  // defaults to the Live tab.
+  useEffect(() => {
+    const box = bottomRef.current?.parentElement;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [filteredLines.length]);
 
   const toggleLevel = (lvl: TaskRunnerLogLevel) => {
     setOnlyLevel(prev => (prev === lvl ? null : lvl));

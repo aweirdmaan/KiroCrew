@@ -41,6 +41,7 @@ function story(overrides: Partial<BoardStory> = {}): BoardStory {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
     phase: 'grooming', phase_label: 'Grooming', current_run: null,
+    priority: null, owner: '',
     ...overrides,
   };
 }

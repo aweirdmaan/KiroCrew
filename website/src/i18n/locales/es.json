@@ -5451,7 +5451,8 @@
       "edit_cancel": "Cancelar",
       "edit_save": "Guardar",
       "comment_edit_hint": "Se guarda como un comentario nuevo — los comentarios de beads no se pueden modificar una vez publicados, así que el original permanece debajo como historial.",
-      "comment_edit_marker": "_(editado)_\n\n{{text}}"
+      "comment_edit_marker": "_(editado)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "autoImprovement": {

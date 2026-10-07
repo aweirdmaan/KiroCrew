@@ -5271,7 +5271,8 @@
       "edit_cancel": "キャンセル",
       "edit_save": "保存",
       "comment_edit_hint": "新しいコメントとして保存されます — beadsのコメントは投稿後に変更できないため、元のコメントは履歴として下に残ります。",
-      "comment_edit_marker": "_(編集済み)_\n\n{{text}}"
+      "comment_edit_marker": "_(編集済み)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "autoImprovement": {

@@ -32,6 +32,7 @@ function story(overrides: Partial<BoardStory> = {}): BoardStory {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
     phase: null, phase_label: 'Backlog', current_run: null,
+    priority: null, owner: '',
     ...overrides,
   };
 }
@@ -110,5 +111,38 @@ describe('BoardPage', () => {
     await waitFor(() => expect(screen.getByTestId('board-timeline-drawer')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('board-timeline-close'));
     expect(screen.queryByTestId('board-timeline-drawer')).toBeNull();
+  });
+
+  it('shows the parent epic id, priority, and assignee on a card, but no lane pill for an idle story', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ priority: 1, owner: 'amaan' })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    const card = await screen.findByTestId('board-card-s-1');
+    expect(screen.getByTestId('board-parent-s-1')).toHaveTextContent('e-1');
+    expect(screen.getByTestId('board-priority-s-1')).toHaveTextContent('P1');
+    expect(screen.getByTestId('board-owner-s-1')).toHaveTextContent('amaan');
+    // no run is in progress or failed - nothing to flag beyond the column
+    // the card already sits in, so there should be no extra status badge
+    expect(card.querySelector('[class*="bg-muted"]')).toBeNull();
+  });
+
+  it('a running story still shows its status badge alongside priority/assignee', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({
+        priority: 0, owner: 'amaan',
+        current_run: { phase: 'grooming', task_key: 'ideate', iteration: 0, task_id: 't-1', status: 'running', started_at: 't', finished_at: null },
+      })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.getByText('Running')).toBeInTheDocument();
+    expect(screen.getByTestId('board-priority-s-1')).toHaveTextContent('P0');
   });
 });

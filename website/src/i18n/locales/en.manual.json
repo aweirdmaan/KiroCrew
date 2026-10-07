@@ -1491,7 +1491,8 @@
       "edit_cancel": "Cancel",
       "edit_save": "Save",
       "comment_edit_hint": "Saved as a new comment — beads comments can't be changed in place, so the original stays below for history.",
-      "comment_edit_marker": "_(edited)_\n\n{{text}}"
+      "comment_edit_marker": "_(edited)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "components": {

@@ -41,6 +41,32 @@ async def test_reads_phase_from_label(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_carries_priority_and_owner_through(tmp_path):
+    rows = [
+        {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
+        {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
+         "parent": "epic-1", "status": "open", "priority": 1, "owner": "amaan"},
+    ]
+    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+        summaries = await board_stories.list_stories(str(tmp_path))
+    assert summaries[0].priority == 1
+    assert summaries[0].owner == "amaan"
+
+
+@pytest.mark.asyncio
+async def test_missing_priority_and_owner_default_sanely(tmp_path):
+    rows = [
+        {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
+        {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
+         "parent": "epic-1", "status": "open"},
+    ]
+    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+        summaries = await board_stories.list_stories(str(tmp_path))
+    assert summaries[0].priority is None
+    assert summaries[0].owner == ""
+
+
+@pytest.mark.asyncio
 async def test_bd_failure_returns_empty_list(tmp_path):
     with patch.object(board_stories, "run_bd", AsyncMock(return_value=None)):
         summaries = await board_stories.list_stories(str(tmp_path))

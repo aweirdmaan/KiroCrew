@@ -50,6 +50,7 @@ class TestListStories:
         summary = StorySummary(
             id="s-1", title="Story", status="open", epic_id="e-1", epic_title="Epic",
             project_path="/proj", phase="planning", phase_label="Planning", current_run=None,
+            priority=1, owner="amaan",
         )
         with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj"])), \
              patch.object(board_handlers, "list_stories", AsyncMock(return_value=[summary])):

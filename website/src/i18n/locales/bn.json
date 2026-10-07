@@ -5361,7 +5361,8 @@
       "edit_cancel": "বাতিল করুন",
       "edit_save": "সংরক্ষণ করুন",
       "comment_edit_hint": "এটি একটি নতুন মন্তব্য হিসেবে সংরক্ষিত হবে — beads মন্তব্য পোস্ট হওয়ার পর পরিবর্তন করা যায় না, তাই মূলটি ইতিহাসের জন্য নিচে থেকে যাবে।",
-      "comment_edit_marker": "_(সম্পাদিত)_\n\n{{text}}"
+      "comment_edit_marker": "_(সম্পাদিত)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "autoImprovement": {

@@ -5451,7 +5451,8 @@
       "edit_cancel": "Annulla",
       "edit_save": "Salva",
       "comment_edit_hint": "Salvato come nuovo commento — i commenti di beads non possono essere modificati una volta pubblicati, quindi l'originale resta sotto per la cronologia.",
-      "comment_edit_marker": "_(modificato)_\n\n{{text}}"
+      "comment_edit_marker": "_(modificato)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "autoImprovement": {

@@ -21,12 +21,14 @@ const POLL_MS = 3000
 // job on that same call. There is no separate "start" action to model here.
 const BACKLOG_PHASE: PhaseDef = { key: '', label: '', tasks: [], gate: false, manual: false }
 
-function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'warn' | 'aim' | 'muted'; label: string } {
+// null = nothing noteworthy beyond the lane the card already sits in - the
+// column itself is that signal, so there is no separate "idle" pill.
+function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'warn' | 'aim'; label: string } | null {
   const run = story.current_run
   if (run?.status === 'running') return { variant: 'aim', label: i18nT('apps.board.status_running') }
   if (run?.status === 'gate_failed') return { variant: 'warn', label: i18nT('apps.board.status_needs_attention') }
   if (run?.status === 'failed') return { variant: 'err', label: i18nT('apps.board.status_failed') }
-  return { variant: 'muted', label: story.phase_label }
+  return null
 }
 
 function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
@@ -48,13 +50,28 @@ function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
       onClick={onOpen}
       data-testid={`board-card-${story.id}`}
     >
-      <div className="text-[11px] text-muted mb-1">{story.epic_title}</div>
+      <div className="text-[11px] text-muted mb-1 flex items-center gap-1.5">
+        <span>{story.epic_title}</span>
+        <span className="font-mono text-[10px] text-muted/70" data-testid={`board-parent-${story.id}`}>{story.epic_id}</span>
+      </div>
       <div className="text-[13px] text-text font-medium mb-2">{story.title}</div>
-      <div className="flex items-center justify-between gap-2">
-        <Badge variant={badge.variant} className="text-[10px]">
-          {running ? <Loader2 size={10} className="inline animate-spin mr-1" /> : null}
-          {badge.label}
-        </Badge>
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+        {badge && (
+          <Badge variant={badge.variant} className="text-[10px]">
+            {running ? <Loader2 size={10} className="inline animate-spin mr-1" /> : null}
+            {badge.label}
+          </Badge>
+        )}
+        {story.priority !== null && story.priority !== undefined && (
+          <Badge variant="muted" className="text-[10px]" data-testid={`board-priority-${story.id}`}>
+            {i18nT('apps.board.priority_short', { priority: story.priority })}
+          </Badge>
+        )}
+        {story.owner && (
+          <span className="text-[10px] text-muted" data-testid={`board-owner-${story.id}`}>{story.owner}</span>
+        )}
+      </div>
+      <div className="flex items-center justify-end gap-2">
         {canRun && (
           <button
             type="button"

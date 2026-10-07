@@ -5541,7 +5541,8 @@
       "edit_cancel": "Отмена",
       "edit_save": "Сохранить",
       "comment_edit_hint": "Сохраняется как новый комментарий — комментарии beads нельзя изменить задним числом, поэтому оригинал остаётся ниже для истории.",
-      "comment_edit_marker": "_(отредактировано)_\n\n{{text}}"
+      "comment_edit_marker": "_(отредактировано)_\n\n{{text}}",
+      "priority_short": "P{{priority}}"
     }
   },
   "autoImprovement": {

@@ -24,6 +24,8 @@ class StorySummary:
     phase: str | None  # None = backlog
     phase_label: str
     current_run: dict | None
+    priority: int | None
+    owner: str
 
 
 async def list_stories(project_path: str) -> list[StorySummary]:
@@ -61,5 +63,7 @@ async def list_stories(project_path: str) -> list[StorySummary]:
             phase=phase_key,
             phase_label=phase.label if phase else "Backlog",
             current_run=history.get("current_run"),
+            priority=row.get("priority"),
+            owner=row.get("owner", ""),
         ))
     return summaries
