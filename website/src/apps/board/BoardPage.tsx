@@ -6,10 +6,11 @@
  */
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, PlayCircle, CheckCircle2 } from 'lucide-react'
+import { Loader2, PlayCircle, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { boardApi, type BoardStory, type PhaseDef } from './boardApi'
+import { needsHuman, NEEDS_HUMAN_LABEL_KEY } from './needsHuman'
 import StoryModal from './StoryModal'
 import { i18nT } from '../../i18n/t'
 
@@ -23,10 +24,9 @@ const BACKLOG_PHASE: PhaseDef = { key: '', label: '', tasks: [], gate: false, ma
 
 // null = nothing noteworthy beyond the lane the card already sits in - the
 // column itself is that signal, so there is no separate "idle" pill.
-function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'warn' | 'aim'; label: string } | null {
+function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'aim'; label: string } | null {
   const run = story.current_run
   if (run?.status === 'running') return { variant: 'aim', label: i18nT('apps.board.status_running') }
-  if (run?.status === 'gate_failed') return { variant: 'warn', label: i18nT('apps.board.status_needs_attention') }
   if (run?.status === 'failed') return { variant: 'err', label: i18nT('apps.board.status_failed') }
   return null
 }
@@ -40,16 +40,30 @@ function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
   busy: boolean
 }) {
   const badge = statusBadge(story)
+  const humanReason = needsHuman(story, phase, story.pending_open_questions)
   const running = story.current_run?.status === 'running'
   const canRun = !phase.manual && !running
   const canAdvance = phase.key === 'review' && !running
 
   return (
     <div
-      className="bg-bg-elevated border border-border rounded-lg p-3 cursor-pointer hover:border-border-strong transition-colors"
+      className={`bg-bg-elevated rounded-lg p-3 cursor-pointer transition-colors ${
+        humanReason
+          ? 'border-2 border-warn bg-warn/5 hover:border-warn'
+          : 'border border-border hover:border-border-strong'
+      }`}
       onClick={onOpen}
       data-testid={`board-card-${story.id}`}
     >
+      {humanReason && (
+        <div
+          className="flex items-center gap-1 text-[11px] font-semibold text-warn mb-2"
+          data-testid={`board-needs-human-${story.id}`}
+        >
+          <AlertTriangle size={12} />
+          {i18nT(NEEDS_HUMAN_LABEL_KEY[humanReason])}
+        </div>
+      )}
       <div className="text-[11px] text-muted mb-1 flex items-center gap-1.5">
         <span>{story.epic_title}</span>
         <span className="font-mono text-[10px] text-muted/70" data-testid={`board-parent-${story.id}`}>{story.epic_id}</span>

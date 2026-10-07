@@ -41,7 +41,7 @@ function story(overrides: Partial<BoardStory> = {}): BoardStory {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
     phase: 'grooming', phase_label: 'Grooming', current_run: null,
-    priority: null, owner: '',
+    priority: null, owner: '', pending_open_questions: false,
     ...overrides,
   };
 }
@@ -205,6 +205,40 @@ describe('StoryModal', () => {
     const content = within(job).getByTestId('board-job-verification-view-content');
     await waitFor(() => expect(within(content).getByText(/fix/)).toBeInTheDocument());
     expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3); // unaffected by the tab switch
+  });
+
+  it('shows the needs-human banner when the last comment is unanswered open questions', async () => {
+    const questionsComment = 'OPEN QUESTIONS\n\n1. Is this ok?\n';
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ comments: [{ id: 'c1', author: 'agent', text: questionsComment, created_at: 't1' }] }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-modal-needs-human')).toBeInTheDocument());
+    expect(screen.getByTestId('board-modal-needs-human')).toHaveTextContent('Answer needed');
+  });
+
+  it('shows the needs-human banner on a gate_failed run', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ comments: [] }));
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: { phase: 'verification', task_key: 'confirm', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
+      history: [],
+    });
+
+    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-modal-needs-human')).toBeInTheDocument());
+    expect(screen.getByTestId('board-modal-needs-human')).toHaveTextContent('Needs attention');
+  });
+
+  it('shows no needs-human banner for an idle, non-manual phase with no pending questions', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ comments: [] }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-description')).toBeInTheDocument());
+    expect(screen.queryByTestId('board-modal-needs-human')).toBeNull();
   });
 
   it('posts a new comment through the composer', async () => {

@@ -72,6 +72,7 @@ async def list_board_stories(request: web.Request) -> web.Response:
                 "phase": story.phase, "phase_label": story.phase_label,
                 "current_run": story.current_run,
                 "priority": story.priority, "owner": story.owner,
+                "pending_open_questions": story.pending_open_questions,
             })
     return web.json_response({"stories": all_stories, "project_paths": project_paths})
 

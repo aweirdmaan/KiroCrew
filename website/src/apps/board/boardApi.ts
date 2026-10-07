@@ -61,6 +61,7 @@ export interface BoardStory {
   current_run: RunRecord | null
   priority: number | null
   owner: string
+  pending_open_questions: boolean
 }
 
 export interface StoryHistory {

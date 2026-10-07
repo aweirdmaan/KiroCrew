@@ -5272,7 +5272,10 @@
       "edit_save": "저장",
       "comment_edit_hint": "새 댓글로 저장됩니다 — beads 댓글은 게시 후 수정할 수 없어 원본은 기록을 위해 아래에 그대로 남습니다.",
       "comment_edit_marker": "_(수정됨)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "답변이 필요합니다",
+      "needs_human_gate_failed": "주의가 필요합니다",
+      "needs_human_manual_review": "검토 준비가 되었습니다"
     }
   },
   "autoImprovement": {

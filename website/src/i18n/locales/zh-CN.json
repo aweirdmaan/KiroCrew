@@ -5272,7 +5272,10 @@
       "edit_save": "保存",
       "comment_edit_hint": "将保存为一条新评论——beads 的评论发布后无法修改，原评论会保留在下方作为历史记录。",
       "comment_edit_marker": "_(已编辑)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "需要回答",
+      "needs_human_gate_failed": "需要关注",
+      "needs_human_manual_review": "已准备好等待审核"
     }
   },
   "autoImprovement": {

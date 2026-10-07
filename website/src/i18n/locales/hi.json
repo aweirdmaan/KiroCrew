@@ -5362,7 +5362,10 @@
       "edit_save": "सहेजें",
       "comment_edit_hint": "इसे एक नई टिप्पणी के रूप में सहेजा जाएगा — beads टिप्पणियों को पोस्ट होने के बाद बदला नहीं जा सकता, इसलिए मूल टिप्पणी इतिहास के लिए नीचे बनी रहेगी।",
       "comment_edit_marker": "_(संपादित)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "जवाब चाहिए",
+      "needs_human_gate_failed": "ध्यान देने की आवश्यकता है",
+      "needs_human_manual_review": "आपकी समीक्षा के लिए तैयार"
     }
   },
   "autoImprovement": {

@@ -5362,7 +5362,10 @@
       "edit_save": "সংরক্ষণ করুন",
       "comment_edit_hint": "এটি একটি নতুন মন্তব্য হিসেবে সংরক্ষিত হবে — beads মন্তব্য পোস্ট হওয়ার পর পরিবর্তন করা যায় না, তাই মূলটি ইতিহাসের জন্য নিচে থেকে যাবে।",
       "comment_edit_marker": "_(সম্পাদিত)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "উত্তর প্রয়োজন",
+      "needs_human_gate_failed": "মনোয়োগ প্রয়োজন",
+      "needs_human_manual_review": "আপনার পর্যালোচনার জন্য প্রস্তুত"
     }
   },
   "autoImprovement": {

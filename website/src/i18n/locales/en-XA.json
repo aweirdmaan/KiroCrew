@@ -5208,7 +5208,10 @@
       "edit_save": "[Şàṽè ······]",
       "comment_edit_hint": "[Şàṽèð àş à ñèẁ çøɱɱèñţ — ƀèàðş çøɱɱèñţş çàñ'ţ ƀè çĥàñğèð ìñ þĺàçè, şø ţĥè øŕìğìñàĺ şţàýş ƀèĺøẁ ƒøŕ ĥìşţøŕý. ································]",
       "comment_edit_marker": "[_(èðìţèð)_\n\n{{text}} ···········]",
-      "priority_short": "[Þ{{priority}} ··]"
+      "priority_short": "[Þ{{priority}} ··]",
+      "needs_human_open_questions": "[Àñşẁèŕ ñèèðèð ············]",
+      "needs_human_gate_failed": "[Ñèèðş àţţèñţìøñ ··············]",
+      "needs_human_manual_review": "[Ŕèàðý ƒøŕ ýøùŕ ŕèṽìèẁ ···············]"
     }
   },
   "components": {

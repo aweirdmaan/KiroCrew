@@ -32,7 +32,7 @@ function story(overrides: Partial<BoardStory> = {}): BoardStory {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
     phase: null, phase_label: 'Backlog', current_run: null,
-    priority: null, owner: '',
+    priority: null, owner: '', pending_open_questions: false,
     ...overrides,
   };
 }
@@ -144,5 +144,55 @@ describe('BoardPage', () => {
     await screen.findByTestId('board-card-s-1');
     expect(screen.getByText('Running')).toBeInTheDocument();
     expect(screen.getByTestId('board-priority-s-1')).toHaveTextContent('P0');
+  });
+
+  it('a gate_failed run is called out with the needs-human banner', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({
+        current_run: { phase: 'planning', task_key: 'plan', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
+      })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.getByTestId('board-needs-human-s-1')).toHaveTextContent('Needs attention');
+  });
+
+  it('a story with unanswered open questions is called out with the needs-human banner', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ phase: 'planning', phase_label: 'Planning', pending_open_questions: true })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.getByTestId('board-needs-human-s-1')).toHaveTextContent('Answer needed');
+  });
+
+  it('a card in the manual Review column is called out as ready for review', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ phase: 'review', phase_label: 'Review' })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.getByTestId('board-needs-human-s-1')).toHaveTextContent('Ready for your review');
+  });
+
+  it('a card in the terminal Done column gets no needs-human banner', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ phase: 'done', phase_label: 'Done' })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.queryByTestId('board-needs-human-s-1')).toBeNull();
   });
 });

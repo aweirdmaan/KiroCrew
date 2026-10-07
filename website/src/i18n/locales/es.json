@@ -5452,7 +5452,10 @@
       "edit_save": "Guardar",
       "comment_edit_hint": "Se guarda como un comentario nuevo — los comentarios de beads no se pueden modificar una vez publicados, así que el original permanece debajo como historial.",
       "comment_edit_marker": "_(editado)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "Respuesta necesaria",
+      "needs_human_gate_failed": "Requiere atención",
+      "needs_human_manual_review": "Lista para tu revisión"
     }
   },
   "autoImprovement": {

@@ -5272,7 +5272,10 @@
       "edit_save": "保存",
       "comment_edit_hint": "新しいコメントとして保存されます — beadsのコメントは投稿後に変更できないため、元のコメントは履歴として下に残ります。",
       "comment_edit_marker": "_(編集済み)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "回答が必要です",
+      "needs_human_gate_failed": "対応が必要です",
+      "needs_human_manual_review": "レビュー待ちです"
     }
   },
   "autoImprovement": {

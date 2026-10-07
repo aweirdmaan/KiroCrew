@@ -9,7 +9,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle, Check } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle, Check, AlertTriangle } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -19,6 +19,7 @@ import PhasedView from '../../pages/aidlc/PhasedView'
 import type { TaskDetail } from '../../types'
 import { boardApi, type BoardStory, type RunRecord, type PhaseDef, type BeadsComment } from './boardApi'
 import { findPendingOpenQuestions, formatAnswers, type ParsedQuestion } from './openQuestions'
+import { needsHuman, NEEDS_HUMAN_LABEL_KEY } from './needsHuman'
 import { i18nT } from '../../i18n/t'
 
 const POLL_MS = 3000
@@ -439,6 +440,10 @@ export default function StoryModal({ story, phases, onClose }: {
     () => findPendingOpenQuestions(detail?.comments ?? []),
     [detail],
   )
+  const currentPhase = phases.find(p => p.key === story.phase)
+  const humanReason = currentPhase
+    ? needsHuman({ current_run: historyQuery.data?.current_run ?? null }, currentPhase, pendingQuestions !== null)
+    : null
 
   const queryClient = useQueryClient()
   const [editingTitle, setEditingTitle] = useState(false)
@@ -509,6 +514,16 @@ export default function StoryModal({ story, phases, onClose }: {
 
         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
           {detailQuery.error && <ErrorNotice message={String(detailQuery.error)} />}
+
+          {humanReason && (
+            <div
+              className="flex items-center gap-2 text-[13px] font-semibold text-warn bg-warn/10 border-2 border-warn rounded-lg px-3 py-2"
+              data-testid="board-modal-needs-human"
+            >
+              <AlertTriangle size={15} />
+              {i18nT(NEEDS_HUMAN_LABEL_KEY[humanReason])}
+            </div>
+          )}
 
           <section>
             <div className="flex items-center gap-1.5 mb-2">

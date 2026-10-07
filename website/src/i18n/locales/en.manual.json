@@ -1492,7 +1492,10 @@
       "edit_save": "Save",
       "comment_edit_hint": "Saved as a new comment — beads comments can't be changed in place, so the original stays below for history.",
       "comment_edit_marker": "_(edited)_\n\n{{text}}",
-      "priority_short": "P{{priority}}"
+      "priority_short": "P{{priority}}",
+      "needs_human_open_questions": "Answer needed",
+      "needs_human_gate_failed": "Needs attention",
+      "needs_human_manual_review": "Ready for your review"
     }
   },
   "components": {
