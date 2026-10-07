@@ -5262,7 +5262,12 @@
       "view_dag": "DAG",
       "view_phased": "分阶段",
       "view_live": "实时",
-      "no_log_yet": "暂无日志"
+      "no_log_yet": "暂无日志",
+      "open_questions_title": "待解决问题",
+      "open_questions_hint": "在下方回答然后提交—无需撰写完整评论。",
+      "open_questions_answer_placeholder": "你的回答…",
+      "open_questions_submit": "提交回答",
+      "open_questions_skip_note": "留空即跳过该问题。"
     }
   },
   "autoImprovement": {

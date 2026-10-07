@@ -1482,7 +1482,12 @@
       "view_dag": "DAG",
       "view_phased": "Phased",
       "view_live": "Live",
-      "no_log_yet": "No log yet"
+      "no_log_yet": "No log yet",
+      "open_questions_title": "Open Questions",
+      "open_questions_hint": "Answer below, then submit - no need to write a full comment.",
+      "open_questions_answer_placeholder": "Your answer…",
+      "open_questions_submit": "Submit Answers",
+      "open_questions_skip_note": "Leave blank to skip a question."
     }
   },
   "components": {

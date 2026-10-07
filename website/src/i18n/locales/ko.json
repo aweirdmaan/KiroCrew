@@ -5262,7 +5262,12 @@
       "view_dag": "DAG",
       "view_phased": "단계별",
       "view_live": "실시간",
-      "no_log_yet": "아직 로그 없음"
+      "no_log_yet": "아직 로그 없음",
+      "open_questions_title": "미해결 질문",
+      "open_questions_hint": "아래에 답변하고 제출하세요 – 전체 댓글을 작성할 필요 없습니다.",
+      "open_questions_answer_placeholder": "답변…",
+      "open_questions_submit": "답변 제출",
+      "open_questions_skip_note": "질문을 건너뜨려면 비워두세요."
     }
   },
   "autoImprovement": {

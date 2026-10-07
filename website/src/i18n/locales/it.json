@@ -5442,7 +5442,12 @@
       "view_dag": "DAG",
       "view_phased": "A fasi",
       "view_live": "Live",
-      "no_log_yet": "Ancora nessun log"
+      "no_log_yet": "Ancora nessun log",
+      "open_questions_title": "Domande aperte",
+      "open_questions_hint": "Rispondi qui sotto e invia – non serve scrivere un commento completo.",
+      "open_questions_answer_placeholder": "La tua risposta…",
+      "open_questions_submit": "Invia risposte",
+      "open_questions_skip_note": "Lascia vuoto per saltare una domanda."
     }
   },
   "autoImprovement": {

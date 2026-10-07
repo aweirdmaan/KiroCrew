@@ -5352,7 +5352,12 @@
       "view_dag": "DAG",
       "view_phased": "Phasen",
       "view_live": "Live",
-      "no_log_yet": "Noch kein Log"
+      "no_log_yet": "Noch kein Log",
+      "open_questions_title": "Offene Fragen",
+      "open_questions_hint": "Unten antworten und absenden – kein vollständiger Kommentar nötig.",
+      "open_questions_answer_placeholder": "Deine Antwort…",
+      "open_questions_submit": "Antworten senden",
+      "open_questions_skip_note": "Leer lassen, um eine Frage zu überspringen."
     }
   },
   "autoImprovement": {

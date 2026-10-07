@@ -5352,7 +5352,12 @@
       "view_dag": "DAG",
       "view_phased": "चरणबद्ध",
       "view_live": "लाइव",
-      "no_log_yet": "अभी तक कोई लॉग नहीं"
+      "no_log_yet": "अभी तक कोई लॉग नहीं",
+      "open_questions_title": "खुले प्रश्न",
+      "open_questions_hint": "नीचे जवाब दें, फिर जमा करें – पूरी टिप्पणी लिखने की जरूरत नहीं।",
+      "open_questions_answer_placeholder": "आपका जवाब…",
+      "open_questions_submit": "जवाब जमा करें",
+      "open_questions_skip_note": "किसी प्रश्न को छोड़ने के लिए खाली छोड़ें।"
     }
   },
   "autoImprovement": {

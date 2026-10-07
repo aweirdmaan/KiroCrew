@@ -9,7 +9,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, ChevronDown, ChevronRight, Eye, Pencil, Send } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -18,6 +18,7 @@ import DagView from '../../pages/aidlc/DagView'
 import PhasedView from '../../pages/aidlc/PhasedView'
 import type { TaskDetail } from '../../types'
 import { boardApi, type BoardStory, type RunRecord, type PhaseDef } from './boardApi'
+import { findPendingOpenQuestions, formatAnswers, type ParsedQuestion } from './openQuestions'
 import { i18nT } from '../../i18n/t'
 
 const POLL_MS = 3000
@@ -188,6 +189,72 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
   );
 }
 
+/** A phone-friendly alternative to writing a whole markdown comment: one
+ * input per open question, answered right below it, submitted as a single
+ * numbered comment matching what rocket-confirm-plan (and a human reading
+ * the thread) expects. Only rendered while the most recent comment is still
+ * an unanswered OPEN QUESTIONS post (see findPendingOpenQuestions) - once
+ * an answer comment goes out, this panel's own query refetch makes it
+ * disappear on its own, same as a normal comment would. */
+function OpenQuestionsPanel({ storyId, questions }: { storyId: string; questions: ParsedQuestion[] }) {
+  const queryClient = useQueryClient()
+  const [answers, setAnswers] = useState<Record<number, string>>({})
+
+  const mutation = useMutation({
+    mutationFn: (body: string) => boardApi.addComment(storyId, body),
+    onSuccess: () => {
+      setAnswers({})
+      queryClient.invalidateQueries({ queryKey: ['board', 'detail', storyId] })
+    },
+  })
+
+  const hasAnyAnswer = Object.values(answers).some(a => a.trim());
+
+  return (
+    <div
+      className="border-2 border-accent/40 bg-accent/5 rounded-lg p-3 flex flex-col gap-3"
+      data-testid="board-open-questions"
+    >
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-text">
+        <HelpCircle size={15} className="text-accent" />
+        {i18nT('apps.board.open_questions_title')}
+      </div>
+      <div className="text-[11px] text-muted -mt-2">{i18nT('apps.board.open_questions_hint')}</div>
+      {questions.map(q => (
+        <div key={q.number} className="flex flex-col gap-1.5" data-testid={`board-open-question-${q.number}`}>
+          <div className="text-[13px] text-text">
+            <span className="font-semibold text-accent mr-1">{q.number}.</span>
+            <MarkdownRenderer content={q.text} />
+          </div>
+          <textarea
+            value={answers[q.number] ?? ''}
+            onChange={e => setAnswers(prev => ({ ...prev, [q.number]: e.target.value }))}
+            placeholder={i18nT('apps.board.open_questions_answer_placeholder')}
+            rows={2}
+            // py-3 + text-[15px], not the composer's denser text-[12px]/py-1.5 -
+            // this panel is explicitly for a phone, where a thumb needs a
+            // bigger, easier-to-hit field more than the screen needs density.
+            className="w-full px-3 py-3 text-[15px] rounded-md border border-border bg-bg text-text placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent resize-y"
+            data-testid={`board-open-question-${q.number}-answer`}
+          />
+        </div>
+      ))}
+      <div className="text-[11px] text-muted">{i18nT('apps.board.open_questions_skip_note')}</div>
+      {mutation.isError && <span className="text-[11px] text-danger">{String(mutation.error)}</span>}
+      <button
+        type="button"
+        disabled={!hasAnyAnswer || mutation.isPending}
+        onClick={() => mutation.mutate(formatAnswers(questions, answers))}
+        className="w-full flex items-center justify-center gap-1.5 text-[14px] py-3 rounded-md bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50 cursor-pointer"
+        data-testid="board-open-questions-submit"
+      >
+        <Send size={14} />
+        {i18nT('apps.board.open_questions_submit')}
+      </button>
+    </div>
+  );
+}
+
 function CommentComposer({ storyId }: { storyId: string }) {
   const queryClient = useQueryClient()
   const [text, setText] = useState('')
@@ -290,6 +357,10 @@ export default function StoryModal({ story, phases, onClose }: {
   }, [historyQuery.data, phases])
 
   const detail = detailQuery.data
+  const pendingQuestions = useMemo(
+    () => findPendingOpenQuestions(detail?.comments ?? []),
+    [detail],
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="board-timeline-drawer">
@@ -321,6 +392,12 @@ export default function StoryModal({ story, phases, onClose }: {
               )}
             </div>
           </section>
+
+          {pendingQuestions && (
+            <section>
+              <OpenQuestionsPanel storyId={story.id} questions={pendingQuestions} />
+            </section>
+          )}
 
           <section>
             <div className="text-[12px] font-medium text-muted mb-2">

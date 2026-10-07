@@ -5532,7 +5532,12 @@
       "view_dag": "DAG",
       "view_phased": "По фазам",
       "view_live": "В реальном времени",
-      "no_log_yet": "Пока нет лога"
+      "no_log_yet": "Пока нет лога",
+      "open_questions_title": "Открытые вопросы",
+      "open_questions_hint": "Ответьте ниже и отправьте — полный комментарий писать не нужно.",
+      "open_questions_answer_placeholder": "Ваш ответ…",
+      "open_questions_submit": "Отправить ответы",
+      "open_questions_skip_note": "Оставьте пустым, чтобы пропустить вопрос."
     }
   },
   "autoImprovement": {

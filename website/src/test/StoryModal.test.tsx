@@ -199,6 +199,46 @@ describe('StoryModal', () => {
     await waitFor(() => expect(boardApi.addComment).toHaveBeenCalledWith('s-1', 'APPROVED'));
   });
 
+  it('does not render the open-questions panel when the last comment is not a questions post', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-comment')).toBeInTheDocument());
+    expect(screen.queryByTestId('board-open-questions')).not.toBeInTheDocument();
+  });
+
+  it('renders a quick-answer input per question and submits them as one comment', async () => {
+    const questionsComment = [
+      'OPEN QUESTIONS',
+      '',
+      '1. Is Python ok?',
+      '2. Where should the module live?',
+      '',
+      '---',
+      '',
+      'To proceed: answer these questions as a comment, then invoke rocket-confirm-plan.',
+    ].join('\n');
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ comments: [{ id: 'c1', author: 'agent', text: questionsComment, created_at: 't1' }] }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.addComment).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-open-questions')).toBeInTheDocument());
+    expect(screen.getByTestId('board-open-question-1')).toBeInTheDocument();
+    expect(screen.getByTestId('board-open-question-2')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('board-open-question-1-answer'), { target: { value: 'Yes, Python is fine' } });
+    fireEvent.click(screen.getByTestId('board-open-questions-submit'));
+
+    await waitFor(() => expect(boardApi.addComment).toHaveBeenCalledWith(
+      's-1',
+      'Answers to the open questions:\n\n1. Yes, Python is fine',
+    ));
+  });
+
   it('closing the modal calls onClose', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail());
     vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });

@@ -5262,7 +5262,12 @@
       "view_dag": "DAG",
       "view_phased": "フェーズ別",
       "view_live": "ライブ",
-      "no_log_yet": "まだログなし"
+      "no_log_yet": "まだログなし",
+      "open_questions_title": "未解決の質問",
+      "open_questions_hint": "下に回答して送信…完全なコメントを書く必要はありません。",
+      "open_questions_answer_placeholder": "あなたの回答…",
+      "open_questions_submit": "回答を送信",
+      "open_questions_skip_note": "質問をスキップする場合は空白のままにしてください。"
     }
   },
   "autoImprovement": {

@@ -5352,7 +5352,12 @@
       "view_dag": "DAG",
       "view_phased": "ধাপবিভাগ",
       "view_live": "লাইভ",
-      "no_log_yet": "এখনও কোনো লগ নেই"
+      "no_log_yet": "এখনও কোনো লগ নেই",
+      "open_questions_title": "অমীমাংসিত প্রশ্ন",
+      "open_questions_hint": "নিচে উত্তর দিয়ে জমা দিন – পুরো মন্তব্য লেখার দরকার নেই।",
+      "open_questions_answer_placeholder": "আপনার উত্তর…",
+      "open_questions_submit": "উত্তর জমা দিন",
+      "open_questions_skip_note": "কোনো প্রশ্ন এড়িয়ে যেতে খালি রাখুন।"
     }
   },
   "autoImprovement": {
