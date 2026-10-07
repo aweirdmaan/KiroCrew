@@ -67,11 +67,14 @@ async def test_missing_priority_and_owner_default_sanely(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_flags_pending_open_questions_in_planning_phase(tmp_path):
+async def test_flags_pending_open_questions_in_implementation_phase(tmp_path):
+    # Planning has no gate - a story always lands in Implementation the
+    # moment `plan` finishes, whether or not a human answered yet. That's
+    # the phase this flag is scoped to; see stories.py's own comment.
     rows = [
         {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
-         "parent": "epic-1", "status": "open", "labels": ["phase:planning"]},
+         "parent": "epic-1", "status": "open", "labels": ["phase:implementation"]},
     ]
     comments = [{"text": "OPEN QUESTIONS\n\n1. Is this ok?\n"}]
 
@@ -92,7 +95,7 @@ async def test_does_not_flag_once_answered(tmp_path):
     rows = [
         {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
-         "parent": "epic-1", "status": "open", "labels": ["phase:plan_review"]},
+         "parent": "epic-1", "status": "open", "labels": ["phase:implementation"]},
     ]
     comments = [
         {"text": "OPEN QUESTIONS\n\n1. Is this ok?\n"},
@@ -112,17 +115,17 @@ async def test_does_not_flag_once_answered(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_does_not_check_comments_outside_planning_or_plan_review(tmp_path):
+async def test_does_not_check_comments_outside_implementation(tmp_path):
     rows = [
         {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
-         "parent": "epic-1", "status": "open", "labels": ["phase:implementation"]},
+         "parent": "epic-1", "status": "open", "labels": ["phase:planning"]},
     ]
 
     async def fake_run_bd(project_path, *args):
         if args[0] == "list":
             return rows
-        raise AssertionError(f"unexpected bd call outside planning/plan_review: {args}")
+        raise AssertionError(f"unexpected bd call outside implementation: {args}")
 
     with patch.object(board_stories, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
@@ -134,3 +137,30 @@ async def test_bd_failure_returns_empty_list(tmp_path):
     with patch.object(board_stories, "run_bd", AsyncMock(return_value=None)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries == []
+
+
+@pytest.mark.asyncio
+async def test_a_stale_running_entry_self_heals_on_every_list_read(tmp_path):
+    from kiro_crew.board import state as board_state
+
+    rows = [
+        {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
+        {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
+         "parent": "epic-1", "status": "open", "labels": ["phase:implementation"]},
+    ]
+    board_state.save_history(str(tmp_path), "epic-1.1", {
+        "current_run": {
+            "phase": "implementation", "task_key": "implement", "iteration": 0,
+            "task_id": "task-orphaned", "status": "running",
+            "started_at": "t1", "finished_at": None,
+        },
+        "history": [],
+    })
+
+    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+        summaries = await board_stories.list_stories(str(tmp_path))
+
+    assert summaries[0].current_run is None
+    data = board_state.load_history(str(tmp_path), "epic-1.1")
+    assert data["history"][-1]["status"] == "missing"
+    assert data["history"][-1]["task_id"] == "task-orphaned"

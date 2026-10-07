@@ -2,7 +2,8 @@
  * Every point in the board's pipeline where a card cannot move on its own
  * and is genuinely waiting on a person - shared between BoardPage's card
  * list (where `pendingOpenQuestions` is the cheap `story.pending_open_questions`
- * flag the backend only computes for planning/plan_review stories) and
+ * flag the backend only computes for Implementation-phase stories, since
+ * that's the only phase it can still be true for - see stories.py) and
  * StoryModal's detail view (where it's the modal's own, fully-parsed
  * `findPendingOpenQuestions(detail.comments)` result, which is strictly more
  * authoritative since it has read every comment, not just checked a flag).
@@ -26,7 +27,10 @@ export function needsHuman(
   pendingOpenQuestions: boolean,
 ): NeedsHumanReason | null {
   if (pendingOpenQuestions) return 'open_questions'
-  if (story.current_run?.status === 'gate_failed') return 'gate_failed'
+  // "missing" (the run vanished from Task Runner's own status, e.g. a
+  // gateway restart) needs the same "click Run again" action as a real
+  // gate failure, so it shares that banner rather than getting its own.
+  if (story.current_run?.status === 'gate_failed' || story.current_run?.status === 'missing') return 'gate_failed'
   if (phase.manual && phase.key !== 'done') return 'manual_review'
   return null
 }

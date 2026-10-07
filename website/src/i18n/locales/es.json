@@ -5455,7 +5455,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "Respuesta necesaria",
       "needs_human_gate_failed": "Requiere atención",
-      "needs_human_manual_review": "Lista para tu revisión"
+      "needs_human_manual_review": "Lista para tu revisión",
+      "mr_url_placeholder": "URL del MR/PR…",
+      "status_cancelled": "Cancelado"
     }
   },
   "autoImprovement": {

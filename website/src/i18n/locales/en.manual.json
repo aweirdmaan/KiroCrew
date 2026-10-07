@@ -1495,7 +1495,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "Answer needed",
       "needs_human_gate_failed": "Needs attention",
-      "needs_human_manual_review": "Ready for your review"
+      "needs_human_manual_review": "Ready for your review",
+      "mr_url_placeholder": "MR/PR URL…",
+      "status_cancelled": "Cancelled"
     }
   },
   "components": {

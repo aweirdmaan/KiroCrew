@@ -6,6 +6,16 @@ SSE stream's producer/consumer split in dashboard/handlers/taskrunner.py: a
 module-level dict keyed by story id, idempotent re-entry, no separate
 service polling every story all the time - only stories with something
 actually in flight cost anything).
+
+Idempotency note (see phases.py's module docstring for the full reasoning):
+``run_job`` always (re)starts a phase at its first task - it never tries to
+resume partway through from history. A gate failure, a crash, or simply a
+human clicking "Run next job" again after answering a question all look
+identical to this function: "this phase's job is not in flight, start it
+from task 0." That matches ``rocket-dag.sh``'s own unattended chain exactly,
+and is only correct because every gated skill in the chain (confirm-plan
+explicitly, approval-check and confirm effectively) is written to be safe
+to re-invoke.
 """
 
 from __future__ import annotations
@@ -44,16 +54,19 @@ class BoardError(Exception):
     nothing to run). Caught at the handler layer and turned into a 400."""
 
 
-def _render_task_yaml(task: Task, story_id: str) -> str:
+def _render_task_yaml(task: Task, story_id: str, extra_arg: str | None = None) -> str:
     # Mirrors rocket-dag.sh's render_template technique exactly, just
     # generated in-memory instead of read from a committed .kiro/workflows/
     # file - the existing files are never read or touched by this engine.
+    # extra_arg covers the one task (harvest) whose skill takes an argument
+    # other than the story/epic id - an MR/PR URL (see REVIEW_COMPLETION_TASK).
+    target = f"{extra_arg}, story {story_id}" if extra_arg is not None else f"epic/story {story_id}"
     return (
         "agents:\n"
         f"  {task.key}:\n"
         "    prompt: >\n"
         f"      Read .kiro/skills/{task.skill}/SKILL.md and follow it for"
-        f" epic/story {story_id}.\n"
+        f" {target}.\n"
         "    depends_on: []\n"
     )
 
@@ -67,7 +80,7 @@ def _write_tmp_yaml(content: str) -> str:
 
 async def _submit(
     task_runner: "TaskRunner", project_path: str, story_id: str,
-    phase_key: str, task: Task,
+    phase_key: str, task: Task, extra_arg: str | None = None,
 ) -> str:
     # start_background only SCHEDULES the run - it reads and decomposes the
     # spec file in the background, after this call already returned (same
@@ -78,7 +91,7 @@ async def _submit(
     # shape and solves it the same way: just don't delete the file - a
     # handful-of-bytes YAML in the OS temp dir is a negligible, OS-swept cost
     # next to a torn-apart run.
-    tmp_path = _write_tmp_yaml(_render_task_yaml(task, story_id))
+    tmp_path = _write_tmp_yaml(_render_task_yaml(task, story_id, extra_arg))
     return await task_runner.start_background(
         tmp_path,
         agent=task.agent,
@@ -90,8 +103,8 @@ async def _submit(
 
 
 def _task_terminal_result(task_runner: "TaskRunner", task_id: str) -> tuple[str, str] | None:
-    """("passed"|<run status>, combined result text), or None if the run
-    isn't terminal yet (still "running").
+    """("passed"|"failed"|"cancelled"|"missing", combined result text), or
+    None if the run isn't terminal yet (still "running").
 
     Judges success from the RUN's own overall status, not task_details[0]:
     Task Runner can auto-replan a single submitted task into several
@@ -107,6 +120,13 @@ def _task_terminal_result(task_runner: "TaskRunner", task_id: str) -> tuple[str,
     here for its TEXT, stitched from every task in order so an
     ALL_TASKS_COMPLETE/gate-comment search sees what actually happened, not
     just the first (possibly superseded) attempt.
+
+    "cancelled" and a vanished run ("missing" - the run disappeared from
+    Task Runner's own in-memory status, e.g. a gateway restart losing an
+    unpersisted entry) are kept distinct from a plain skill failure rather
+    than collapsed into "failed": a human reading the timeline should see
+    what actually happened, and a vanished run in particular did not fail
+    on its own merits - it just needs a plain rerun, not a fix.
     """
     status = task_runner.status()
     entry = next((r for r in status["runs"] if r["task_id"] == task_id), None)
@@ -117,7 +137,12 @@ def _task_terminal_result(task_runner: "TaskRunner", task_id: str) -> tuple[str,
     run_status = entry["status"]
     details = entry.get("task_details") or []
     combined_result = "\n".join(d.get("result") or d.get("error") or "" for d in details)
-    task_status = "passed" if run_status in ("completed", "passed") else run_status
+    if run_status in ("completed", "passed"):
+        task_status = "passed"
+    elif run_status == "cancelled":
+        task_status = "cancelled"
+    else:
+        task_status = "failed"
     return task_status, combined_result
 
 
@@ -137,10 +162,10 @@ async def _watch_and_reconcile(
         logger.exception("board: reconcile failed for story %s task %s", story_id, task_id)
     finally:
         # _reconcile may itself have already spawned and registered a NEW
-        # watcher for this story_id (auto-chaining verify -> fix, looping an
-        # implementation iteration, etc.) before this task gets here - only
-        # pop the entry if it still points at THIS task, so a popped key
-        # doesn't orphan a watcher that already replaced it.
+        # watcher for this story_id (looping an implementation iteration,
+        # etc.) before this task gets here - only pop the entry if it still
+        # points at THIS task, so a popped key doesn't orphan a watcher that
+        # already replaced it.
         if _inflight.get(story_id) is asyncio.current_task():
             _inflight.pop(story_id, None)
 
@@ -155,7 +180,6 @@ async def _reconcile(
     task_key = current.get("task_key", "")
     iteration = current.get("iteration", 0)
     now = datetime.now().isoformat()
-    passed = task_status in ("passed", "completed")
 
     def _finish(run_status: str) -> None:
         current["status"] = run_status
@@ -163,11 +187,11 @@ async def _reconcile(
         data["history"].append(dict(current))
 
     if phase_key == "review":
-        # The one-off retro task, not part of PHASES - always terminal, no
-        # gate, no loop: success advances to Done, failure just leaves the
-        # story in Review for the human to retry "Mark reviewed" later.
-        _finish("passed" if passed else "failed")
-        if passed:
+        # The one-off harvest task, not part of PHASES - always terminal,
+        # no gate, no loop: success advances to Done, failure just leaves
+        # the story in Review for the human to retry "Mark reviewed" later.
+        _finish("passed" if task_status == "passed" else task_status)
+        if task_status == "passed":
             await board_state.set_phase(project_path, story_id, "done")
         data["current_run"] = None
         board_state.save_history(project_path, story_id, data)
@@ -178,59 +202,48 @@ async def _reconcile(
         logger.warning("board: reconcile saw unknown phase %r for story %s", phase_key, story_id)
         return
 
-    if not passed:
-        _finish("failed")
+    if task_status != "passed":
+        _finish(task_status)  # "failed" | "cancelled" | "missing" - preserved, not collapsed
         data["current_run"] = None
         board_state.save_history(project_path, story_id, data)
         return
 
-    if phase.loop == "until_all_tasks_complete":
-        if "ALL_TASKS_COMPLETE" in result_text:
-            _finish("passed")
-            await _advance_phase(project_path, story_id, phase_key, data, now)
-            return
-        if iteration + 1 >= phase.loop_cap:
+    task = next((t for t in phase.tasks if t.key == task_key), None)
+    if task is None:
+        logger.warning("board: reconcile saw unknown task %r in phase %r for story %s", task_key, phase_key, story_id)
+        return
+
+    if task.loop == "until_all_tasks_complete" and "ALL_TASKS_COMPLETE" not in result_text:
+        if iteration + 1 >= task.loop_cap:
             _finish("failed")  # exceeded the iteration cap - needs a human
             data["current_run"] = None
             board_state.save_history(project_path, story_id, data)
             return
         _finish("passed")
-        await _resubmit(task_runner, project_path, story_id, phase, task_key, iteration + 1, data)
+        await _resubmit(task_runner, project_path, story_id, phase, task.key, iteration + 1, data)
         return
 
-    task_idx = next((i for i, t in enumerate(phase.tasks) if t.key == task_key), -1)
-    is_last_task = task_idx == len(phase.tasks) - 1
-
-    if not is_last_task:
-        # Auto-chain within the phase (verify -> fix -> confirm): no gate,
-        # no human needed between these, matching rocket-dag.sh's own
-        # unattended sequence for this exact combination.
-        _finish("passed")
-        next_task = phase.tasks[task_idx + 1]
-        await _resubmit(task_runner, project_path, story_id, phase, next_task.key, 0, data)
-        return
-
-    if phase.gate:
+    if task.gate:
         gate_line = await board_state.last_gate_comment(project_path, story_id)
-        if board_state.gate_passed(gate_line):
-            _finish("passed")
-            await _advance_phase(project_path, story_id, phase_key, data, now)
-            return
-        if phase.loop == "until_gate_pass" and iteration + 1 < phase.loop_cap and phase.loop_back_to:
+        if not board_state.gate_passed(gate_line):
+            # Gate failed: stop right here, same as rocket-dag.sh's own
+            # `gate()` check after confirm-plan/approval-check/confirm. A
+            # human acts (answers questions, approves, fixes the break) and
+            # clicks "Run next job" again, which restarts this phase from
+            # its first task - see the module docstring on why that's
+            # correct, not wasteful.
             _finish("gate_failed")
-            loop_task = next(t for t in phase.tasks if t.key == phase.loop_back_to)
-            await _resubmit(task_runner, project_path, story_id, phase, loop_task.key, iteration + 1, data)
+            data["current_run"] = None
+            board_state.save_history(project_path, story_id, data)
             return
-        # Gate failed and either this phase doesn't loop, or the cap is
-        # reached: stay here. A human comments the fix/approval beads expects
-        # and clicks "Run next job" again, which re-checks the fresh comment.
-        _finish("gate_failed")
-        data["current_run"] = None
-        board_state.save_history(project_path, story_id, data)
-        return
 
     _finish("passed")
-    await _advance_phase(project_path, story_id, phase_key, data, now)
+    task_idx = next(i for i, t in enumerate(phase.tasks) if t.key == task_key)
+    if task_idx + 1 < len(phase.tasks):
+        next_task = phase.tasks[task_idx + 1]
+        await _resubmit(task_runner, project_path, story_id, phase, next_task.key, 0, data)
+    else:
+        await _advance_phase(project_path, story_id, phase_key, data, now)
 
 
 async def _resubmit(
@@ -260,8 +273,41 @@ async def _advance_phase(
     board_state.save_history(project_path, story_id, data)
 
 
+def reconcile_stale_running(project_path: str, story_id: str) -> dict:
+    """A persisted ``current_run`` can say "running" long after the process
+    watching it is gone - most commonly a gateway restart mid-run: the
+    in-process ``_inflight`` watcher is Python-process-lifetime by design,
+    so it's just gone, while the history file (and the real Task Runner run,
+    if it's still alive elsewhere) carries on with no one polling it.
+    Detected here as: marked "running", but no live ``_inflight`` entry for
+    this story in THIS process. Recorded as "missing" - the same status a
+    run that vanished from Task Runner's own status gets (see
+    ``_task_terminal_result``'s docstring) - rather than left to claim
+    forever that something is in progress when nothing is watching it.
+    Called on every "Run next job" click and every board list read, so a
+    stale entry self-heals the moment anyone looks, not just DO move on.
+    Returns the (possibly updated) history dict.
+    """
+    data = board_state.load_history(project_path, story_id)
+    current = data.get("current_run")
+    if not current or current.get("status") != "running":
+        return data
+    watcher = _inflight.get(story_id)
+    if watcher is not None and not watcher.done():
+        return data  # genuinely still being watched by this process
+    now = datetime.now().isoformat()
+    current["status"] = "missing"
+    current["finished_at"] = now
+    data["history"].append(dict(current))
+    data["current_run"] = None
+    board_state.save_history(project_path, story_id, data)
+    return data
+
+
 async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -> str:
-    """Submit the story's next job. Returns the new task_id.
+    """Submit the story's next job - always starting the current phase at
+    its first task (see the module docstring on why that's the right
+    behavior, not a missing optimization). Returns the new task_id.
 
     Idempotent: if a job for this story is already in flight, returns the
     existing task_id instead of submitting a duplicate.
@@ -273,9 +319,11 @@ async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -
         if current and current.get("task_id"):
             return current["task_id"]
 
+    reconcile_stale_running(project_path, story_id)
+
     phase_key = await board_state.get_phase(project_path, story_id)
     if phase_key is None:
-        phase_key = next_phase_key(None)  # "grooming" - leaving backlog
+        phase_key = next_phase_key(None)  # "planning" - leaving backlog
         await board_state.set_phase(project_path, story_id, phase_key)
 
     phase = PHASE_BY_KEY.get(phase_key)
@@ -283,15 +331,10 @@ async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -
         raise BoardError(f"story {story_id} is in phase {phase_key!r}, which has no runnable job")
 
     data = board_state.load_history(project_path, story_id)
-    current = data.get("current_run")
-    resume_task_key = current.get("task_key") if current and current.get("phase") == phase_key else None
-    task_key = resume_task_key or phase.tasks[0].key
-    iteration = current.get("iteration", 0) if resume_task_key else 0
-
-    task = next((t for t in phase.tasks if t.key == task_key), phase.tasks[0])
+    task = phase.tasks[0]
     task_id = await _submit(task_runner, project_path, story_id, phase.key, task)
     data["current_run"] = {
-        "phase": phase.key, "task_key": task.key, "iteration": iteration,
+        "phase": phase.key, "task_key": task.key, "iteration": 0,
         "task_id": task_id, "status": "running",
         "started_at": datetime.now().isoformat(), "finished_at": None,
     }
@@ -302,8 +345,10 @@ async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -
     return task_id
 
 
-async def complete_review(task_runner: "TaskRunner", project_path: str, story_id: str) -> str:
-    """The one manual transition: Review -> Done, running rocket-retro."""
+async def complete_review(task_runner: "TaskRunner", project_path: str, story_id: str, mr_url: str) -> str:
+    """The one manual transition: Review -> Done, running rocket-harvest
+    against the MR/PR URL a human supplies after reading its review
+    comments - matching rocket-dag.sh's separate `cmd_harvest`."""
     phase_key = await board_state.get_phase(project_path, story_id)
     if phase_key != "review":
         raise BoardError(f"story {story_id} is in phase {phase_key!r}, not 'review'")
@@ -314,7 +359,9 @@ async def complete_review(task_runner: "TaskRunner", project_path: str, story_id
         if current and current.get("task_id"):
             return current["task_id"]
 
-    task_id = await _submit(task_runner, project_path, story_id, "review", REVIEW_COMPLETION_TASK)
+    task_id = await _submit(
+        task_runner, project_path, story_id, "review", REVIEW_COMPLETION_TASK, extra_arg=mr_url,
+    )
     data = board_state.load_history(project_path, story_id)
     data["current_run"] = {
         "phase": "review", "task_key": REVIEW_COMPLETION_TASK.key, "iteration": 0,

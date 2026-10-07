@@ -5365,7 +5365,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "जवाब चाहिए",
       "needs_human_gate_failed": "ध्यान देने की आवश्यकता है",
-      "needs_human_manual_review": "आपकी समीक्षा के लिए तैयार"
+      "needs_human_manual_review": "आपकी समीक्षा के लिए तैयार",
+      "mr_url_placeholder": "MR/PR यूआरएल…",
+      "status_cancelled": "रद्द कर दिया गया"
     }
   },
   "autoImprovement": {

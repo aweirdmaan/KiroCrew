@@ -5545,7 +5545,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "Требуется ответ",
       "needs_human_gate_failed": "Требует внимания",
-      "needs_human_manual_review": "Готово к вашей проверке"
+      "needs_human_manual_review": "Готово к вашей проверке",
+      "mr_url_placeholder": "Ссылка на MR/PR…",
+      "status_cancelled": "Отменено"
     }
   },
   "autoImprovement": {

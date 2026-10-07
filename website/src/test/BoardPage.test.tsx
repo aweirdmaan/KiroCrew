@@ -21,10 +21,10 @@ vi.mock('../apps/board/boardApi', async () => {
 })
 
 const PHASES: PhaseDef[] = [
-  { key: 'grooming', label: 'Grooming', tasks: ['ideate'], gate: false, manual: false },
-  { key: 'planning', label: 'Planning', tasks: ['plan'], gate: false, manual: false },
-  { key: 'review', label: 'Review', tasks: [], gate: false, manual: true },
-  { key: 'done', label: 'Done', tasks: [], gate: false, manual: true },
+  { key: 'planning', label: 'Planning', tasks: ['ideate', 'plan'], manual: false },
+  { key: 'implementation', label: 'Implementation', tasks: ['confirm_plan', 'approval_check', 'implement', 'verify', 'fix', 'confirm', 'pr', 'retro'], manual: false },
+  { key: 'review', label: 'Review', tasks: [], manual: true },
+  { key: 'done', label: 'Done', tasks: [], manual: true },
 ]
 
 function story(overrides: Partial<BoardStory> = {}): BoardStory {
@@ -41,7 +41,7 @@ describe('BoardPage', () => {
   it('renders backlog plus every phase column, with stories grouped by phase', async () => {
     vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
     vi.mocked(boardApi.stories).mockResolvedValue({
-      stories: [story(), story({ id: 's-2', phase: 'planning', phase_label: 'Planning' })],
+      stories: [story(), story({ id: 's-2', phase: 'implementation', phase_label: 'Implementation' })],
       project_paths: ['/proj'],
     });
 
@@ -50,9 +50,11 @@ describe('BoardPage', () => {
     // board-column-backlog alone is a weak signal (it renders unconditionally,
     // before the phases query resolves) - wait for a phase-derived column
     // instead, which only exists once both queries have actually loaded.
-    await waitFor(() => expect(screen.getByTestId('board-column-grooming')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('board-column-planning')).toBeInTheDocument());
     expect(screen.getByTestId('board-column-backlog')).toBeInTheDocument();
-    expect(screen.getByTestId('board-column-planning')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-implementation')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-review')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-done')).toBeInTheDocument();
     expect(screen.getByTestId('board-card-s-1')).toBeInTheDocument();
     expect(screen.getByTestId('board-card-s-2')).toBeInTheDocument();
   });
@@ -84,14 +86,47 @@ describe('BoardPage', () => {
       stories: [story({ phase: 'review', phase_label: 'Review' })],
       project_paths: ['/proj'],
     });
-    vi.mocked(boardApi.advance).mockResolvedValue({ ok: true, task_id: 'task-2' });
 
     renderWithProviders(<BoardPage />);
     await waitFor(() => expect(screen.getByTestId('board-advance-s-1')).toBeInTheDocument());
     expect(screen.queryByTestId('board-run-s-1')).toBeNull();
+  });
 
+  it('marking reviewed collects an MR URL and calls boardApi.advance with it', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ phase: 'review', phase_label: 'Review' })],
+      project_paths: ['/proj'],
+    });
+    vi.mocked(boardApi.advance).mockResolvedValue({ ok: true, task_id: 'task-2' });
+
+    renderWithProviders(<BoardPage />);
+    await waitFor(() => expect(screen.getByTestId('board-advance-s-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('board-advance-s-1'));
-    await waitFor(() => expect(boardApi.advance).toHaveBeenCalledWith('s-1'));
+
+    const input = await screen.findByTestId('board-advance-mr-url-s-1');
+    fireEvent.change(input, { target: { value: 'https://example.com/mr/42' } });
+    fireEvent.click(screen.getByTestId('board-advance-confirm-s-1'));
+
+    await waitFor(() => expect(boardApi.advance).toHaveBeenCalledWith('s-1', 'https://example.com/mr/42'));
+  });
+
+  it('cancelling the mark-reviewed form hides it again without calling advance', async () => {
+    vi.mocked(boardApi.advance).mockClear();
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ phase: 'review', phase_label: 'Review' })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await waitFor(() => expect(screen.getByTestId('board-advance-s-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('board-advance-s-1'));
+    await screen.findByTestId('board-advance-mr-url-s-1');
+    fireEvent.click(screen.getByTestId('board-advance-cancel-s-1'));
+
+    expect(screen.queryByTestId('board-advance-mr-url-s-1')).toBeNull();
+    expect(boardApi.advance).not.toHaveBeenCalled();
   });
 
   it('clicking a card opens the story modal', async () => {
@@ -135,7 +170,7 @@ describe('BoardPage', () => {
     vi.mocked(boardApi.stories).mockResolvedValue({
       stories: [story({
         priority: 0, owner: 'amaan',
-        current_run: { phase: 'grooming', task_key: 'ideate', iteration: 0, task_id: 't-1', status: 'running', started_at: 't', finished_at: null },
+        current_run: { phase: 'planning', task_key: 'ideate', iteration: 0, task_id: 't-1', status: 'running', started_at: 't', finished_at: null },
       })],
       project_paths: ['/proj'],
     });
@@ -146,11 +181,39 @@ describe('BoardPage', () => {
     expect(screen.getByTestId('board-priority-s-1')).toHaveTextContent('P0');
   });
 
+  it('a cancelled run shows a muted "Cancelled" badge, not an alarming one', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({
+        current_run: { phase: 'planning', task_key: 'ideate', iteration: 0, task_id: 't-1', status: 'cancelled', started_at: 't', finished_at: 't2' },
+      })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.getByText('Cancelled')).toBeInTheDocument();
+  });
+
+  it('a missing (vanished) run is flagged as needing a human, same as a gate failure', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({
+        current_run: { phase: 'planning', task_key: 'ideate', iteration: 0, task_id: 't-1', status: 'missing', started_at: 't', finished_at: 't2' },
+      })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<BoardPage />);
+    await screen.findByTestId('board-card-s-1');
+    expect(screen.getByTestId('board-needs-human-s-1')).toHaveTextContent('Needs attention');
+  });
+
   it('a gate_failed run is called out with the needs-human banner', async () => {
     vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
     vi.mocked(boardApi.stories).mockResolvedValue({
       stories: [story({
-        current_run: { phase: 'planning', task_key: 'plan', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
+        current_run: { phase: 'implementation', task_key: 'confirm_plan', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
       })],
       project_paths: ['/proj'],
     });
@@ -163,7 +226,7 @@ describe('BoardPage', () => {
   it('a story with unanswered open questions is called out with the needs-human banner', async () => {
     vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
     vi.mocked(boardApi.stories).mockResolvedValue({
-      stories: [story({ phase: 'planning', phase_label: 'Planning', pending_open_questions: true })],
+      stories: [story({ phase: 'implementation', phase_label: 'Implementation', pending_open_questions: true })],
       project_paths: ['/proj'],
     });
 

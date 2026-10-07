@@ -35,7 +35,6 @@ export interface PhaseDef {
   key: string
   label: string
   tasks: string[]
-  gate: boolean
   manual: boolean
 }
 
@@ -95,7 +94,8 @@ export const boardApi = {
   history: (storyId: string) => coreGet<StoryHistory>(`/stories/${encodeURIComponent(storyId)}/history`),
   detail: (storyId: string) => coreGet<StoryDetail>(`/stories/${encodeURIComponent(storyId)}/detail`),
   run: (storyId: string) => corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/run`),
-  advance: (storyId: string) => corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/advance`),
+  advance: (storyId: string, mrUrl: string) =>
+    corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/advance`, { mr_url: mrUrl }),
   addComment: (storyId: string, text: string) =>
     corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/comments`, { text }),
   updateStory: (storyId: string, fields: { title?: string; description?: string }) =>

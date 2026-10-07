@@ -25,16 +25,17 @@ async def _body(resp) -> dict:
 
 class TestGetPhases:
     @pytest.mark.asyncio
-    async def test_returns_all_nine_phases_in_order(self):
+    async def test_returns_all_four_phases_in_order(self):
         resp = await board_handlers.get_phases(_request("GET", "/api/board/phases"))
         data = await _body(resp)
         assert [p["key"] for p in data["phases"]] == [
-            "grooming", "planning", "plan_review", "approval", "implementation",
-            "verification", "pr", "review", "done",
+            "planning", "implementation", "review", "done",
         ]
-        verification = next(p for p in data["phases"] if p["key"] == "verification")
-        assert verification["tasks"] == ["verify", "fix", "confirm"]
-        assert verification["gate"] is True
+        implementation = next(p for p in data["phases"] if p["key"] == "implementation")
+        assert implementation["tasks"] == [
+            "confirm_plan", "approval_check", "implement", "verify", "fix", "confirm", "pr", "retro",
+        ]
+        assert "gate" not in implementation  # gate/loop are per-task now, not echoed at the phase level
 
 
 class TestListStories:
@@ -104,13 +105,35 @@ class TestRunStoryJob:
 
 class TestAdvanceStory:
     @pytest.mark.asyncio
-    async def test_advances_via_complete_review(self):
+    async def test_advances_via_complete_review_with_the_mr_url(self):
         req = _request("POST", "/api/board/stories/s-1/advance", match_info={"id": "s-1"})
         with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
-             patch.object(board_engine, "complete_review", AsyncMock(return_value="task-999")):
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"mr_url": "https://example.com/mr/1"}, None))), \
+             patch.object(board_engine, "complete_review", AsyncMock(return_value="task-999")) as mocked:
             resp = await board_handlers.advance_story(req)
         data = await _body(resp)
         assert data == {"ok": True, "task_id": "task-999"}
+        mocked.assert_called_once_with(req.app["state"].task_runner, "/proj", "s-1", "https://example.com/mr/1")
+
+    @pytest.mark.asyncio
+    async def test_blank_mr_url_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/advance", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"mr_url": "  "}, None))):
+            resp = await board_handlers.advance_story(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "empty_mr_url"
+
+    @pytest.mark.asyncio
+    async def test_missing_mr_url_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/advance", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({}, None))):
+            resp = await board_handlers.advance_story(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "empty_mr_url"
 
 
 class TestGetStoryHistory:

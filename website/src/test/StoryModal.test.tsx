@@ -32,15 +32,15 @@ vi.mock('../components/LiveLogPanel', () => ({
 }))
 
 const PHASES: PhaseDef[] = [
-  { key: 'grooming', label: 'Grooming', tasks: ['ideate'], gate: false, manual: false },
-  { key: 'verification', label: 'Verification', tasks: ['verify', 'fix', 'confirm'], gate: true, manual: false },
+  { key: 'planning', label: 'Planning', tasks: ['ideate', 'plan'], manual: false },
+  { key: 'implementation', label: 'Implementation', tasks: ['verify', 'fix', 'confirm'], manual: false },
 ]
 
 function story(overrides: Partial<BoardStory> = {}): BoardStory {
   return {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
-    phase: 'grooming', phase_label: 'Grooming', current_run: null,
+    phase: 'planning', phase_label: 'Planning', current_run: null,
     priority: null, owner: '', pending_open_questions: false,
     ...overrides,
   };
@@ -57,7 +57,7 @@ function detail(overrides: Partial<StoryDetail> = {}): StoryDetail {
 
 function run(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
-    phase: 'grooming', task_key: 'ideate', iteration: 0, task_id: 'task-1',
+    phase: 'planning', task_key: 'ideate', iteration: 0, task_id: 'task-1',
     status: 'passed', started_at: 't1', finished_at: 't2',
     ...overrides,
   };
@@ -88,8 +88,8 @@ describe('StoryModal', () => {
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-grooming');
-    fireEvent.click(within(job).getByRole('button', { name: /Grooming/ }));
+    const job = await screen.findByTestId('board-job-planning');
+    fireEvent.click(within(job).getByRole('button', { name: /Planning/ }));
     await waitFor(() => expect(within(job).getByTestId('board-timeline-row')).toBeInTheDocument());
     const row = within(job).getByTestId('board-timeline-row');
     // The expand toggle is the inner <button>, not the outer row container a
@@ -114,9 +114,9 @@ describe('StoryModal', () => {
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-grooming');
+    const job = await screen.findByTestId('board-job-planning');
     expect(within(job).queryByTestId('board-timeline-row')).toBeNull();
-    expect(within(job).queryByTestId('board-job-grooming-view-content')).toBeNull();
+    expect(within(job).queryByTestId('board-job-planning-view-content')).toBeNull();
   });
 
   it('groups timeline entries by job (phase), with multiple tasks nested under one job', async () => {
@@ -124,17 +124,17 @@ describe('StoryModal', () => {
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
       history: [
-        run({ phase: 'verification', task_key: 'verify', status: 'passed' }),
-        run({ phase: 'verification', task_key: 'fix', status: 'passed' }),
-        run({ phase: 'verification', task_key: 'confirm', status: 'gate_failed' }),
+        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'implementation', task_key: 'fix', status: 'passed' }),
+        run({ phase: 'implementation', task_key: 'confirm', status: 'gate_failed' }),
       ],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
 
-    await waitFor(() => expect(screen.getByTestId('board-job-verification')).toBeInTheDocument());
-    const job = screen.getByTestId('board-job-verification');
-    fireEvent.click(within(job).getByRole('button', { name: /Verification/ }));
+    await waitFor(() => expect(screen.getByTestId('board-job-implementation')).toBeInTheDocument());
+    const job = screen.getByTestId('board-job-implementation');
+    fireEvent.click(within(job).getByRole('button', { name: /Implementation/ }));
     expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3);
   });
 
@@ -142,16 +142,16 @@ describe('StoryModal', () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail());
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
-      history: [run({ status: 'passed', task_id: 'task-grooming' })],
+      history: [run({ status: 'passed', task_id: 'task-planning' })],
     });
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-grooming');
-    fireEvent.click(within(job).getByRole('button', { name: /Grooming/ }));
-    expect(within(job).getByTestId('board-job-grooming-view-live')).toHaveClass('bg-accent');
+    const job = await screen.findByTestId('board-job-planning');
+    fireEvent.click(within(job).getByRole('button', { name: /Planning/ }));
+    expect(within(job).getByTestId('board-job-planning-view-live')).toHaveClass('bg-accent');
     const panel = within(job).getByTestId('stub-live-log-panel');
-    expect(panel).toHaveAttribute('data-task-id', 'task-grooming');
+    expect(panel).toHaveAttribute('data-task-id', 'task-planning');
   });
 
   it('switching a job to the DAG view renders one node per task, in order', async () => {
@@ -159,21 +159,21 @@ describe('StoryModal', () => {
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
       history: [
-        run({ phase: 'verification', task_key: 'verify', status: 'passed' }),
-        run({ phase: 'verification', task_key: 'fix', status: 'passed' }),
+        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'implementation', task_key: 'fix', status: 'passed' }),
       ],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-verification');
-    fireEvent.click(within(job).getByRole('button', { name: /Verification/ }));
-    fireEvent.click(within(job).getByTestId('board-job-verification-view-dag'));
+    const job = await screen.findByTestId('board-job-implementation');
+    fireEvent.click(within(job).getByRole('button', { name: /Implementation/ }));
+    fireEvent.click(within(job).getByTestId('board-job-implementation-view-dag'));
 
     // Scoped to the view-content wrapper, not the whole job: the flat
     // attempt log below also renders each task_key as text, which would
     // otherwise make these an ambiguous "found multiple elements" match.
-    const content = within(job).getByTestId('board-job-verification-view-content');
+    const content = within(job).getByTestId('board-job-implementation-view-content');
     // DagView renders each node's title as SVG text - "confirm" never ran,
     // so it should still appear as a pending node (fed from the job's own
     // task list, not only from entries that have happened).
@@ -187,22 +187,22 @@ describe('StoryModal', () => {
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
       history: [
-        run({ phase: 'verification', task_key: 'verify', status: 'passed' }),
-        run({ phase: 'verification', task_key: 'fix', status: 'passed', iteration: 0 }),
-        run({ phase: 'verification', task_key: 'fix', status: 'gate_failed', iteration: 1 }),
+        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'implementation', task_key: 'fix', status: 'passed', iteration: 0 }),
+        run({ phase: 'implementation', task_key: 'fix', status: 'gate_failed', iteration: 1 }),
       ],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-verification');
-    fireEvent.click(within(job).getByRole('button', { name: /Verification/ }));
-    fireEvent.click(within(job).getByTestId('board-job-verification-view-phased'));
+    const job = await screen.findByTestId('board-job-implementation');
+    fireEvent.click(within(job).getByRole('button', { name: /Implementation/ }));
+    fireEvent.click(within(job).getByTestId('board-job-implementation-view-phased'));
 
     // PhasedView renders a task's title inline as "Task N: <title>" (one
     // combined text node), so an exact match on just "fix" would never hit -
     // a substring matcher is the correct query here, not a workaround.
-    const content = within(job).getByTestId('board-job-verification-view-content');
+    const content = within(job).getByTestId('board-job-implementation-view-content');
     await waitFor(() => expect(within(content).getByText(/fix/)).toBeInTheDocument());
     expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3); // unaffected by the tab switch
   });
@@ -221,11 +221,11 @@ describe('StoryModal', () => {
   it('shows the needs-human banner on a gate_failed run', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail({ comments: [] }));
     vi.mocked(boardApi.history).mockResolvedValue({
-      current_run: { phase: 'verification', task_key: 'confirm', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
+      current_run: { phase: 'implementation', task_key: 'confirm', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
       history: [],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'verification', phase_label: 'Verification' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
 
     await waitFor(() => expect(screen.getByTestId('board-modal-needs-human')).toBeInTheDocument());
     expect(screen.getByTestId('board-modal-needs-human')).toHaveTextContent('Needs attention');

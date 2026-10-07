@@ -5275,7 +5275,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "回答が必要です",
       "needs_human_gate_failed": "対応が必要です",
-      "needs_human_manual_review": "レビュー待ちです"
+      "needs_human_manual_review": "レビュー待ちです",
+      "mr_url_placeholder": "MR/PRのURL…",
+      "status_cancelled": "キャンセルされました"
     }
   },
   "autoImprovement": {

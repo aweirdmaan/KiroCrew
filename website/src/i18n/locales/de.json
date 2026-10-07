@@ -5365,7 +5365,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "Antwort erforderlich",
       "needs_human_gate_failed": "Erfordert Aufmerksamkeit",
-      "needs_human_manual_review": "Bereit für deine Prüfung"
+      "needs_human_manual_review": "Bereit für deine Prüfung",
+      "mr_url_placeholder": "MR/PR-URL…",
+      "status_cancelled": "Abgebrochen"
     }
   },
   "autoImprovement": {

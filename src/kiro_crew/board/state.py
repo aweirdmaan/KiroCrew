@@ -44,7 +44,7 @@ class RunRecord:
     task_key: str
     iteration: int
     task_id: str | None
-    status: str  # "running" | "passed" | "failed" | "gate_failed"
+    status: str  # "running" | "passed" | "failed" | "gate_failed" | "cancelled" | "missing"
     started_at: str
     finished_at: str | None = None
 

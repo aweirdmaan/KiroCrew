@@ -9,16 +9,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from kiro_crew.bd_cli import run_bd
+from kiro_crew.board import engine as board_engine
 from kiro_crew.board import state as board_state
 from kiro_crew.board.open_questions import last_comment_has_pending_open_questions
 from kiro_crew.board.phases import PHASE_BY_KEY
 
-# The only phases where rocket-plan's own OPEN QUESTIONS post can still be
-# sitting unanswered: planning ends in it directly, and plan_review is where
-# the story lands immediately after (that phase has no gate - see
-# phases.py's comment on why - so a story can reach plan_review with the
-# questions still unanswered).
-_PHASES_WHERE_QUESTIONS_MAY_BE_PENDING = {"planning", "plan_review"}
+# The only phase where rocket-plan's own OPEN QUESTIONS post can still be
+# sitting unanswered: Planning has no gate (see phases.py's module
+# docstring), so a story always advances straight into Implementation the
+# moment `plan` finishes, whether or not a human has answered yet -
+# Implementation's own first task (confirm-plan) is what actually checks.
+_PHASES_WHERE_QUESTIONS_MAY_BE_PENDING = {"implementation"}
 
 
 @dataclass
@@ -61,7 +62,12 @@ async def list_stories(project_path: str) -> list[StorySummary]:
                 phase_key = label[len("phase:"):]
                 break
         phase = PHASE_BY_KEY.get(phase_key) if phase_key else None
-        history = board_state.load_history(project_path, story_id)
+        # Self-heals a "running" entry orphaned by e.g. a gateway restart
+        # mid-run - see reconcile_stale_running's own docstring. Every board
+        # list read clears one, not just a "Run next job" click, so the UI
+        # never shows a run as perpetually in progress when nothing is
+        # actually watching it.
+        history = board_engine.reconcile_stale_running(project_path, story_id)
         pending_open_questions = False
         if phase_key in _PHASES_WHERE_QUESTIONS_MAY_BE_PENDING:
             comments = await run_bd(project_path, "comments", story_id)

@@ -5211,7 +5211,9 @@
       "priority_short": "[Þ{{priority}} ··]",
       "needs_human_open_questions": "[Àñşẁèŕ ñèèðèð ············]",
       "needs_human_gate_failed": "[Ñèèðş àţţèñţìøñ ··············]",
-      "needs_human_manual_review": "[Ŕèàðý ƒøŕ ýøùŕ ŕèṽìèẁ ···············]"
+      "needs_human_manual_review": "[Ŕèàðý ƒøŕ ýøùŕ ŕèṽìèẁ ···············]",
+      "mr_url_placeholder": "[ṀŔ/ÞŔ ÙŔĹ… ···············]",
+      "status_cancelled": "[Çàñçèĺĺèð ··············]"
     }
   },
   "components": {

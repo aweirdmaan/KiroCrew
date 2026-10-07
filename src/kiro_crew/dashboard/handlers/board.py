@@ -43,14 +43,17 @@ async def _find_story_project(story_id: str) -> str | None:
 
 
 async def get_phases(request: web.Request) -> web.Response:
-    """GET /api/board/phases — the 9 column definitions, for the frontend to
-    render the board structure without hard-coding it twice."""
+    """GET /api/board/phases — the lane definitions (Backlog is implicit,
+    not one of these - see stories.py), for the frontend to render the
+    board structure without hard-coding it twice. `gate`/`loop` are
+    per-TASK now (phases.py), not per-phase - nothing in the frontend reads
+    them at the phase level, so they're not echoed here."""
     return web.json_response({
         "phases": [
             {
                 "key": p.key, "label": p.label,
                 "tasks": [t.key for t in p.tasks],
-                "gate": p.gate, "manual": p.manual,
+                "manual": p.manual,
             }
             for p in PHASES
         ]
@@ -97,7 +100,10 @@ async def run_story_job(request: web.Request) -> web.Response:
 
 async def advance_story(request: web.Request) -> web.Response:
     """POST /api/board/stories/{id}/advance — the one manual transition,
-    Review -> Done (runs rocket-retro, then advances on success)."""
+    Review -> Done. Body: {"mr_url": "..."} - runs rocket-harvest against
+    that MR/PR URL (a human supplies it after reading its review comments,
+    matching rocket-dag.sh's separate `harvest` command), then advances on
+    success."""
     state: DashboardState = request.app["state"]
     if not state.task_runner:
         return web.json_response(
@@ -107,8 +113,15 @@ async def advance_story(request: web.Request) -> web.Response:
     project_path = await _find_story_project(story_id)
     if project_path is None:
         return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
+    body, body_err = await read_bounded_json(request, max_bytes=64_000)
+    if body_err is not None:
+        return body_err
+    assert body is not None
+    mr_url = body.get("mr_url", "")
+    if not isinstance(mr_url, str) or not mr_url.strip():
+        return web.json_response({"error": "mr_url required", "code": "empty_mr_url"}, status=400)
     try:
-        task_id = await board_engine.complete_review(state.task_runner, project_path, story_id)
+        task_id = await board_engine.complete_review(state.task_runner, project_path, story_id, mr_url.strip())
     except board_engine.BoardError as exc:
         return web.json_response({"error": str(exc), "code": "board_phase_error"}, status=400)
     return web.json_response({"ok": True, "task_id": task_id})

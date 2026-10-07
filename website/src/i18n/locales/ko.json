@@ -5275,7 +5275,9 @@
       "priority_short": "P{{priority}}",
       "needs_human_open_questions": "답변이 필요합니다",
       "needs_human_gate_failed": "주의가 필요합니다",
-      "needs_human_manual_review": "검토 준비가 되었습니다"
+      "needs_human_manual_review": "검토 준비가 되었습니다",
+      "mr_url_placeholder": "MR/PR 링크…",
+      "status_cancelled": "취소됨"
     }
   },
   "autoImprovement": {

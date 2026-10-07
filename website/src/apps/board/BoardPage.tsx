@@ -1,12 +1,13 @@
 /**
- * Story Board — a beads story moves across 9 columns (phases), one
- * crew-rocket skill (job) per column, driven by kiro_crew.board (backend:
- * dashboard/handlers/board.py). See the plan at
- * src/kiro_crew/board/__init__.py for the full design.
+ * Story Board — a beads story moves across 5 lanes (Backlog, Planning,
+ * Implementation, Review, Done), matched 1:1 to crew-rocket's own
+ * `scripts/rocket-dag.sh` commands (`plan`, `implement`, `harvest`) - see
+ * `kiro_crew.board.phases`'s module docstring for the full mapping, driven
+ * by kiro_crew.board (backend: dashboard/handlers/board.py).
  */
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, PlayCircle, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Loader2, PlayCircle, CheckCircle2, AlertTriangle, Check, X } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { boardApi, type BoardStory, type PhaseDef } from './boardApi'
@@ -18,16 +19,26 @@ const POLL_MS = 3000
 
 // manual: false - a backlog card's "Run next job" button is what calls
 // POST /stories/{id}/run, and the backend (board.engine.run_job) already
-// promotes a label-less story straight into "grooming" and runs its first
+// promotes a label-less story straight into "planning" and runs its first
 // job on that same call. There is no separate "start" action to model here.
-const BACKLOG_PHASE: PhaseDef = { key: '', label: '', tasks: [], gate: false, manual: false }
+const BACKLOG_PHASE: PhaseDef = { key: '', label: '', tasks: [], manual: false }
 
 // null = nothing noteworthy beyond the lane the card already sits in - the
 // column itself is that signal, so there is no separate "idle" pill.
-function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'aim'; label: string } | null {
+// gate_failed is surfaced through needsHuman's banner instead of here - a
+// human needs to DO something about it, not just notice it.
+function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'aim' | 'muted'; label: string } | null {
   const run = story.current_run
   if (run?.status === 'running') return { variant: 'aim', label: i18nT('apps.board.status_running') }
   if (run?.status === 'failed') return { variant: 'err', label: i18nT('apps.board.status_failed') }
+  // "cancelled" is distinct from a plain skill failure - see
+  // engine._task_terminal_result's own docstring - and shown as such rather
+  // than collapsed into "Failed", which would wrongly suggest the skill
+  // itself broke. "missing" (the run vanished from Task Runner's own
+  // in-memory status) isn't a separate badge here - needsHuman already
+  // folds it into the same "needs a click to rerun" banner as gate_failed,
+  // and showing both would just repeat the same signal two ways.
+  if (run?.status === 'cancelled') return { variant: 'muted', label: i18nT('apps.board.status_cancelled') }
   return null
 }
 
@@ -36,7 +47,7 @@ function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
   phase: PhaseDef
   onOpen: () => void
   onRun: () => void
-  onAdvance: () => void
+  onAdvance: (mrUrl: string) => void
   busy: boolean
 }) {
   const badge = statusBadge(story)
@@ -44,6 +55,8 @@ function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
   const running = story.current_run?.status === 'running'
   const canRun = !phase.manual && !running
   const canAdvance = phase.key === 'review' && !running
+  const [showAdvanceForm, setShowAdvanceForm] = useState(false)
+  const [mrUrl, setMrUrl] = useState('')
 
   return (
     <div
@@ -98,10 +111,10 @@ function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
             {i18nT('apps.board.run_next_job')}
           </button>
         )}
-        {canAdvance && (
+        {canAdvance && !showAdvanceForm && (
           <button
             type="button"
-            onClick={e => { e.stopPropagation(); onAdvance(); }}
+            onClick={e => { e.stopPropagation(); setShowAdvanceForm(true); }}
             disabled={busy}
             className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-ok text-accent-fg hover:opacity-90 disabled:opacity-50 cursor-pointer"
             data-testid={`board-advance-${story.id}`}
@@ -111,6 +124,39 @@ function StoryCard({ story, phase, onOpen, onRun, onAdvance, busy }: {
           </button>
         )}
       </div>
+      {canAdvance && showAdvanceForm && (
+        <div
+          className="flex items-center gap-1.5 mt-2"
+          onClick={e => e.stopPropagation()}
+          data-testid={`board-advance-form-${story.id}`}
+        >
+          <input
+            value={mrUrl}
+            onChange={e => setMrUrl(e.target.value)}
+            placeholder={i18nT('apps.board.mr_url_placeholder')}
+            className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded-md border border-border bg-bg text-text placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            data-testid={`board-advance-mr-url-${story.id}`}
+            autoFocus
+          />
+          <button
+            type="button"
+            disabled={!mrUrl.trim() || busy}
+            onClick={() => onAdvance(mrUrl.trim())}
+            className="text-ok hover:opacity-80 cursor-pointer disabled:opacity-50"
+            data-testid={`board-advance-confirm-${story.id}`}
+          >
+            <Check size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAdvanceForm(false)}
+            className="text-muted hover:text-text cursor-pointer"
+            data-testid={`board-advance-cancel-${story.id}`}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -131,7 +177,7 @@ export default function BoardPage() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
   })
   const advanceMutation = useMutation({
-    mutationFn: (storyId: string) => boardApi.advance(storyId),
+    mutationFn: ({ storyId, mrUrl }: { storyId: string; mrUrl: string }) => boardApi.advance(storyId, mrUrl),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
   })
 
@@ -190,7 +236,7 @@ export default function BoardPage() {
                       busy={busy}
                       onOpen={() => setOpenStory(story)}
                       onRun={() => runMutation.mutate(story.id)}
-                      onAdvance={() => advanceMutation.mutate(story.id)}
+                      onAdvance={mrUrl => advanceMutation.mutate({ storyId: story.id, mrUrl })}
                     />
                   ))
                 )}
