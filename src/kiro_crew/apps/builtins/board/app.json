@@ -11,7 +11,7 @@
     "kanban",
     "task-runner"
   ],
-  "defaultEnabled": false,
+  "defaultEnabled": true,
   "platform": {
     "os": [
       "macos",
