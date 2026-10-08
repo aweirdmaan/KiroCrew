@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import re
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -364,6 +367,16 @@ async def api_taskrunner_delete(request: web.Request) -> web.Response:
         await state.task_runner.delete_run(task_id)
     except WorkflowInitializing as exc:
         return web.json_response({"error": str(exc), "code": exc.code}, status=503)
+    # The run is gone from task_runner._runs now, so its stream history has
+    # nothing left to describe - drop the buffer and stop its producer (a
+    # no-op if it already finished), and delete the on-disk log too, rather
+    # than let either linger past the run they describe.
+    stream_state = _stream_states.pop(task_id, None)
+    if stream_state is not None:
+        if stream_state.producer_task and not stream_state.producer_task.done():
+            stream_state.producer_task.cancel()
+        if stream_state.log_path is not None:
+            stream_state.log_path.unlink(missing_ok=True)
     return web.json_response({"ok": True})
 
 
@@ -1052,3 +1065,351 @@ async def api_taskrunner_refine_answer(request: web.Request) -> web.Response:
     except asyncio.InvalidStateError:
         return web.json_response({"error": "question already resolved"}, status=409)
     return web.json_response({"ok": True})
+
+
+_STREAM_POLL_INTERVAL_S = 0.3
+# Bounds how much per-run history a stream buffer keeps in memory: oldest
+# frames are dropped once a run exceeds this many, so a run left running for
+# hours cannot grow the server's memory without limit. Generous for anything
+# but an extreme outlier - a typical run emits a few dozen to a few hundred
+# frames even with "progress" chunks included.
+_STREAM_BUFFER_MAX_FRAMES = 4000
+
+
+_STREAM_LOG_SUBDIR = "streams"
+
+
+def _stream_log_path(state: DashboardState, task_id: str) -> Path | None:
+    """Where a run's stream frames are durably logged, or None if the task
+    runner has no resolvable work dir (e.g. a test double) to anchor under.
+
+    Lives beside runs.json (TaskRunner._runs_path()) on purpose: same
+    directory, same "durable local state for this install" meaning, just one
+    file per run instead of one shared file, since a stream log is append-only
+    and runs.json is a whole-registry snapshot.
+    """
+    work_dir = getattr(state.task_runner, "_work_dir", None)
+    # Deliberately isinstance-checked, not just truthy: a test double
+    # (MagicMock()) answers getattr(..., "_work_dir", None) with ANOTHER
+    # auto-created Mock rather than None, which is truthy and stringifies
+    # into a path segment like "<MagicMock id=...>" - str()'d into a real
+    # Path, that silently writes stream logs into the process's actual CWD
+    # instead of nowhere. A str/Path is the only shape a real TaskRunner ever
+    # has here (see TaskRunner.__init__state.task_runner._work_dir).
+    if not isinstance(work_dir, (str, Path)):
+        return None
+    # task_id is server-generated (timestamp-suffixed, never user path input),
+    # but a defensive sep-stripping keeps a hostile task_id from escaping the
+    # streams/ directory even so.
+    safe_id = re.sub(r"[\\/]", "_", task_id)
+    return Path(work_dir) / _STREAM_LOG_SUBDIR / f"{safe_id}.jsonl"
+
+
+def _load_stream_log(path: Path) -> list[dict]:
+    """Read a run's full on-disk frame history. Best-effort: a missing file is
+    the normal case (no prior run, or a fresh install), and a torn last line
+    (process killed mid-append) is tolerated rather than failing the read -
+    everything before it is still a valid prefix of the real history."""
+    frames: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    frames.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return []
+    except OSError:
+        logger.debug("failed to read stream log %s", path, exc_info=True)
+        return []
+    return frames
+
+
+def _append_stream_log(path: Path | None, frame: dict) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(frame))
+            f.write("\n")
+    except OSError:
+        logger.debug("failed to append stream log frame to %s", path, exc_info=True)
+
+
+class _TaskStreamState:
+    """Per-run SSE state, shared by every connection to that run's stream.
+
+    One background producer task per run polls task_runner.status() and
+    appends frames to `buffer` (a capped deque of (seq, frame) pairs) AND to
+    `log_path` on disk (unbounded - the memory cap exists to bound a live
+    process's RAM, the disk copy is the actual durable record); every HTTP
+    connection is a read-only consumer that replays `buffer` from seq 0 and
+    then tails new frames as they arrive. This is what makes the live log
+    survive a reload, a second tab, or a gateway RESTART: frames are never
+    written to only one response stream or only to in-memory state, they live
+    on disk for as long as the run itself stays in task_runner._runs
+    (api_taskrunner_delete evicts this entry, and the file, on delete).
+    """
+
+    __slots__ = (
+        "buffer",
+        "next_seq",
+        "producer_task",
+        "done",
+        "last_run_status",
+        "last_step_status",
+        "sent_result_for",
+        "sent_progress_len",
+        "log_path",
+    )
+
+    def __init__(self, log_path: Path | None) -> None:
+        self.buffer: deque[tuple[int, dict]] = deque(maxlen=_STREAM_BUFFER_MAX_FRAMES)
+        self.next_seq = 0
+        self.producer_task: asyncio.Task | None = None
+        self.done = False
+        self.last_run_status: str | None = None
+        self.last_step_status: dict[int, str] = {}
+        self.sent_result_for: set[int] = set()
+        self.sent_progress_len: dict[int, int] = {}
+        self.log_path = log_path
+
+    def append(self, frame: dict) -> None:
+        self.buffer.append((self.next_seq, frame))
+        self.next_seq += 1
+        _append_stream_log(self.log_path, frame)
+
+    def load_from_disk(self) -> None:
+        """Preload `buffer` and the dedup bookkeeping from `log_path`, for a
+        _TaskStreamState created fresh after a gateway restart (or the very
+        first connection ever) rather than one still live from an earlier
+        connection in this same process."""
+        if self.log_path is None:
+            return
+        frames = _load_stream_log(self.log_path)
+        if not frames:
+            return
+        # The deque's own maxlen already keeps only the newest
+        # _STREAM_BUFFER_MAX_FRAMES for in-memory replay; next_seq must still
+        # count every frame ever written so a resumed producer's new seqs
+        # never collide with ones already on disk.
+        for seq, frame in enumerate(frames):
+            self.buffer.append((seq, frame))
+        self.next_seq = len(frames)
+        for frame in frames:
+            t = frame.get("type")
+            idx = frame.get("index")
+            if t == "run":
+                self.last_run_status = frame.get("status")
+            elif t == "step" and idx is not None:
+                self.last_step_status[idx] = frame.get("status")
+            elif t == "progress" and idx is not None:
+                self.sent_progress_len[idx] = self.sent_progress_len.get(idx, 0) + len(
+                    frame.get("text") or ""
+                )
+            elif t == "result" and idx is not None:
+                self.sent_result_for.add(idx)
+            elif t == "ended":
+                self.done = True
+
+
+# task_id -> _TaskStreamState, for the lifetime of that run's entry in
+# task_runner._runs. Module-level and process-lifetime by design: this is
+# what lets a reloaded tab, or a second tab, replay a run's full stream
+# history instead of only ever seeing frames from the one connection that
+# happened to be open when they were produced. The on-disk log underneath it
+# (see _TaskStreamState.log_path) is what makes that survive this dict itself
+# being wiped by a gateway restart.
+_stream_states: dict[str, _TaskStreamState] = {}
+
+
+async def _produce_taskrunner_stream(state: DashboardState, task_id: str, st: _TaskStreamState) -> None:
+    """Background task: the ONLY thing that calls task_runner.status() for
+    this run and appends new frames to `st.buffer`/`st.log_path`.
+    api_taskrunner_stream spawns exactly one of these per task_id, lazily, on
+    the first connection, and never a second one while st.producer_task is
+    still alive - every later connection for the same run is a pure consumer
+    of `st.buffer`.
+    """
+    if st.done:
+        # Loaded from disk already terminal (the run finished before this
+        # process even started, e.g. right after a restart) - nothing left to
+        # produce, every connection just replays st.buffer.
+        return
+    try:
+        while True:
+            if task_id not in state.task_runner._runs:
+                st.append({"type": "ended", "reason": "run no longer tracked"})
+                break
+            status = state.task_runner.status()
+            entry = next((r for r in status["runs"] if r["task_id"] == task_id), None)
+            if entry is None:
+                st.append({"type": "ended", "reason": "run no longer visible"})
+                break
+
+            if entry.get("error"):
+                entry["error"] = redact_credentials(redact_exfiltration_urls(entry["error"])[0])[0]
+
+            if entry["status"] != st.last_run_status:
+                st.append(
+                    {
+                        "type": "run",
+                        "status": entry["status"],
+                        "completed": entry.get("completed", 0),
+                        "tasks": entry.get("tasks", 0),
+                    }
+                )
+                st.last_run_status = entry["status"]
+
+            for step in entry.get("task_details", []):
+                idx = step["index"]
+                if st.last_step_status.get(idx) != step["status"]:
+                    st.append(
+                        {
+                            "type": "step",
+                            "index": idx,
+                            "title": step.get("title", ""),
+                            "status": step["status"],
+                        }
+                    )
+                    st.last_step_status[idx] = step["status"]
+                if step["status"] in ("in_progress", "reviewing"):
+                    text = step.get("result") or ""
+                    if text:
+                        text = redact_credentials(redact_exfiltration_urls(text)[0])[0]
+                    prev_len = st.sent_progress_len.get(idx, 0)
+                    if len(text) > prev_len:
+                        st.append({"type": "progress", "index": idx, "text": text[prev_len:]})
+                        st.sent_progress_len[idx] = len(text)
+                    elif len(text) < prev_len:
+                        # The serialized status truncates result to 2000 chars,
+                        # so a long turn can make text shrink relative to what
+                        # we already sent - resync the cursor without
+                        # replaying anything.
+                        st.sent_progress_len[idx] = len(text)
+                if step["status"] in ("passed", "failed") and idx not in st.sent_result_for:
+                    text = step.get("result") or step.get("error") or ""
+                    if text:
+                        text = redact_credentials(redact_exfiltration_urls(text)[0])[0]
+                    st.append({"type": "result", "index": idx, "status": step["status"], "text": text})
+                    st.sent_result_for.add(idx)
+
+            if not entry.get("running") and entry["status"] != "running":
+                st.append({"type": "ended", "reason": "run finished", "status": entry["status"]})
+                break
+
+            await asyncio.sleep(_STREAM_POLL_INTERVAL_S)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("taskrunner stream producer crashed for %s", task_id)
+        st.append({"type": "ended", "reason": "stream producer error"})
+    finally:
+        st.done = True
+
+
+def _get_or_start_stream_producer(state: DashboardState, task_id: str) -> _TaskStreamState:
+    st = _stream_states.get(task_id)
+    if st is None:
+        st = _TaskStreamState(_stream_log_path(state, task_id))
+        st.load_from_disk()
+        _stream_states[task_id] = st
+    if not st.done and (st.producer_task is None or st.producer_task.done()):
+        st.producer_task = asyncio.create_task(_produce_taskrunner_stream(state, task_id, st))
+    return st
+
+
+async def api_taskrunner_stream(request: web.Request) -> web.StreamResponse:
+    """GET /api/taskrunner/{task_id}/stream — Server-Sent Events of step changes.
+
+    Deliberately isolated from push_slots_update and the WS/SSE slots pipeline:
+    that mechanism is already overloaded (serialize_slot_views, governance
+    generations, app-token filtering) and a new event type threaded through it
+    would need to prove it cannot regress any of that. This instead polls the
+    SAME in-memory ``Project`` ``api_taskrunner_status`` already reads -
+    read-only, no new mutation call sites in task_executor.py - at a tighter
+    interval than the dashboard's own 3s client poll.
+
+    The actual polling happens in a single per-run background producer
+    (`_produce_taskrunner_stream`), shared by every connection to this
+    task_id: this handler just replays that run's buffered history (capped in
+    memory at `_STREAM_BUFFER_MAX_FRAMES`, kept in full on disk at
+    `_stream_log_path`) and then tails whatever the producer appends next.
+    That is what lets a reloaded page, a second tab, or a connection made
+    after a gateway RESTART pick the stream up from the beginning instead of
+    only ever seeing frames emitted while that one connection - or that one
+    process lifetime - happened to be open. Ends once the run has reached a
+    terminal status, its final frame has been replayed, and nothing further
+    will ever be appended - or when the client disconnects.
+
+    Frame shapes (one JSON object per ``data:`` line):
+      {"type": "run", "status": ..., "completed": int, "tasks": int}
+      {"type": "step", "index": int, "title": str, "status": ...}
+      {"type": "progress", "index": int, "text": str}
+      {"type": "result", "index": int, "status": "passed"|"failed", "text": str}
+      {"type": "ended", "reason": str, "status"?: ...}
+
+    "progress" carries the agent's own in-progress turn text (task.result,
+    which task_executor.py now updates on a ~0.25s cadence while a step is
+    still "running") so the dashboard can show what the agent is actually
+    writing as it happens, not just a status label - "result" only ever
+    fires once a step reaches a terminal status. "text" is the delta since
+    the last "progress"/"result" frame for that index, so the client can
+    just append it.
+    """
+    state: DashboardState = request.app["state"]
+    if not state.task_runner:
+        return web.json_response(
+            {"error": "task runner not available", "code": "task_runner_unavailable"}, status=400
+        )
+    reference = request.match_info["task_id"]
+    task_id = _canonical_task_reference(state.task_runner, reference)
+    if task_id not in state.task_runner._runs:
+        return web.json_response({"error": "not found", "code": "task_not_found"}, status=404)
+
+    st = _get_or_start_stream_producer(state, task_id)
+
+    response = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+    await response.prepare(request)
+
+    async def send(event: dict) -> bool:
+        try:
+            await response.write(f"data: {json.dumps(event)}\n\n".encode())
+            return True
+        except (ConnectionResetError, asyncio.CancelledError):
+            return False
+
+    last_seq_sent = -1
+    try:
+        while True:
+            # A list() snapshot is safe against the producer concurrently
+            # appending (or evicting past the maxlen) in another task: it
+            # only ever reflects frames that existed at this instant, and any
+            # seq this connection hasn't sent yet is still itself intact.
+            for seq, frame in list(st.buffer):
+                if seq <= last_seq_sent:
+                    continue
+                if not await send(frame):
+                    return response
+                last_seq_sent = seq
+            if st.done and last_seq_sent >= st.next_seq - 1:
+                break
+            await asyncio.sleep(_STREAM_POLL_INTERVAL_S)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            await response.write_eof()
+    return response

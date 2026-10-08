@@ -515,6 +515,7 @@ from kiro_crew.dashboard.handlers.taskrunner import (  # noqa: E402, F401
     api_taskrunner_retry,
     api_taskrunner_start,
     api_taskrunner_status,
+    api_taskrunner_stream,
     api_taskrunner_to_chat,
     api_taskrunner_update_plan,
     api_taskrunner_update_task,

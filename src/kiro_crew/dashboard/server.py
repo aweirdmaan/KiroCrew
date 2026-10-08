@@ -74,6 +74,7 @@ from kiro_crew.dashboard.crash_dump_store import (
     rotate_dumps,
     sweep_stale_dumps,
 )
+from kiro_crew.dashboard.handlers.board import setup_board_routes
 from kiro_crew.dashboard.handlers.artifacts import (
     api_artifact_asset,
     api_artifact_comments,
@@ -5164,6 +5165,8 @@ async def start_dashboard(
 
     # Knowledge Library
     setup_knowledge_routes(app)
+    # Story Board (beads-driven workflow pipeline on top of Task Runner)
+    setup_board_routes(app)
     setup_weixin_routes(app)
     setup_feedback_routes(app)
     setup_secrets_routes(app)

@@ -6,10 +6,13 @@ exact wording, with every result citing the source it came from.
 
 ## What gets indexed
 
-Uploaded documents, synced folders, and artifacts you have saved. Text is split
-into overlapping chunks so a match can be quoted in context, and entities and
-relations found in each chunk are linked into a graph that connects passages
-across different files.
+Uploaded documents, synced folders, artifacts you have saved, and - if you
+configure `knowledge.beads_project_paths` - issues from a local `bd` (beads)
+project: title, description, and comments, one issue per independently-
+replaceable item group, polled on `knowledge.beads_sync_interval_secs`. Text is
+split into overlapping chunks so a match can be quoted in context, and entities
+and relations found in each chunk are linked into a graph that connects
+passages across different files.
 
 ## What search returns
 

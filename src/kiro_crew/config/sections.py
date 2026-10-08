@@ -2416,6 +2416,29 @@ class KnowledgeConfig:
             "grows and spends only once you ask for it.",
         ),
     )
+    beads_project_paths: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Beads Project Paths",
+            "Local directories where 'bd' (beads) is initialized, synced into the "
+            "Knowledge Library so issues (title/description/comments) become "
+            "semantically searchable and fused with the rest of your docs, "
+            "instead of only reachable by an agent that already knows to run "
+            "'bd show <id>'. Each path becomes one aggregate 'Beads (<path>)' "
+            "source with one independently-replaceable item group per issue. "
+            "Empty list disables beads sync entirely - off by default like "
+            "artifact auto-ingest, for the same reason: every ingested chunk "
+            "costs an LLM extraction call.",
+        ),
+    )
+    beads_sync_interval_secs: int = field(
+        default=300,
+        metadata=_meta(
+            "Beads Sync Interval",
+            "How often (seconds) each configured beads_project_paths entry is "
+            "polled via 'bd list'/'bd show' for new, changed, or removed issues.",
+        ),
+    )
     auto_ingest_artifact_kinds: list[str] = field(
         default_factory=lambda: list(DEFAULT_AUTO_INGEST_ARTIFACT_KINDS),
         metadata=_meta(

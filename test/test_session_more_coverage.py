@@ -958,6 +958,55 @@ class TestOpenTaskSession:
         assert mgr._sessions[key].provider is winner_provider
         mgr.release(key)
 
+    @pytest.mark.asyncio
+    async def test_a_non_runtime_backend_never_bootstraps_the_shared_runtime(self, cfg) -> None:
+        """claude is not a member of ACP_BACKENDS_ACP_RUNTIME (agent_sdk/backends.py):
+        it has no shared run-scoped runtime to bootstrap. Before this test's fix,
+        open_task_session bootstrapped one anyway, which spawns kiro-cli under a
+        foreign label and crashes with "kiro-cli not found" on a claude-only
+        install (kirodotdev/KiroCrew#13872). The positive membership test
+        get_bg_session() already applies must gate this path too."""
+        cfg.agent.acp_backend = ACP_BACKEND_CLAUDE
+        mgr = SessionManager(cfg)
+        sentinel = object()
+        mgr.get_or_create = AsyncMock(return_value=sentinel)
+        mgr._get_or_bootstrap_run_runtime = AsyncMock(
+            side_effect=AssertionError("must not bootstrap a run runtime for claude")
+        )
+
+        result = await mgr.open_task_session(
+            "taskrunner:run1", "taskrunner:run1:step1", agent="kirocrew"
+        )
+
+        assert result is sentinel
+        mgr.get_or_create.assert_awaited_once_with(
+            "taskrunner:run1:step1", agent="kirocrew", approval_policy="", cwd=None
+        )
+        mgr._get_or_bootstrap_run_runtime.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_runtime_backend_still_bootstraps_normally(self, mgr) -> None:
+        """The membership gate must not block backends that ARE runtime-capable
+        (the default kiro backend here) - only claude and its siblings outside
+        ACP_BACKENDS_ACP_RUNTIME are redirected."""
+        key = "taskrunner:run2:step1"
+
+        async def create_session(**kwargs):
+            return SimpleNamespace(session_id="sid-1")
+
+        runtime = SimpleNamespace(create_session=create_session)
+        mgr._get_or_bootstrap_run_runtime = AsyncMock(return_value=runtime)
+
+        with patch(
+            "kiro_crew.acp.session_provider.AcpSessionProvider",
+            side_effect=lambda handle, rt: _provider(),
+        ):
+            _provider_, is_new, _resumed = await mgr.open_task_session("taskrunner:run2", key)
+
+        assert is_new is True
+        mgr._get_or_bootstrap_run_runtime.assert_awaited_once()
+        mgr.release(key)
+
 
 # ── Signal escalation ────────────────────────────────────────────────────────
 

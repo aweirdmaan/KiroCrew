@@ -4654,6 +4654,31 @@ class TestKnowledgeAutoIngest:
         kc = _load_from_dict({"knowledge": {}}).knowledge
         assert (kc.auto_add_documents, kc.auto_ingest_artifacts) == (False, False)
 
+    def test_beads_project_paths_default_empty(self) -> None:
+        assert _load_from_dict({}).knowledge.beads_project_paths == []
+
+    def test_beads_project_paths_reads_configured_value(self) -> None:
+        # _build_knowledge_config is a hand-rolled, per-field reader (not
+        # generic dataclass reflection) - a field added to the KnowledgeConfig
+        # dataclass without a matching line here silently loads as the
+        # dataclass default forever, no matter what config.json says. This
+        # pins the actual read path for a real-looking value.
+        cfg = _load_from_dict(
+            {"knowledge": {"beads_project_paths": ["/repo/one", "/repo/two"]}}
+        )
+        assert cfg.knowledge.beads_project_paths == ["/repo/one", "/repo/two"]
+
+    def test_beads_project_paths_ignores_non_string_entries(self) -> None:
+        cfg = _load_from_dict({"knowledge": {"beads_project_paths": ["/ok", 5, None, ""]}})
+        assert cfg.knowledge.beads_project_paths == ["/ok"]
+
+    def test_beads_sync_interval_secs_default(self) -> None:
+        assert _load_from_dict({}).knowledge.beads_sync_interval_secs == 300
+
+    def test_beads_sync_interval_secs_reads_configured_value(self) -> None:
+        cfg = _load_from_dict({"knowledge": {"beads_sync_interval_secs": 60}})
+        assert cfg.knowledge.beads_sync_interval_secs == 60
+
     def test_folder_chunk_budget_default(self) -> None:
         assert _load_from_dict({}).knowledge.folder_ingest_chunk_budget == 300
 
