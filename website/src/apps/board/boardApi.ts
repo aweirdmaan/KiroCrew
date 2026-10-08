@@ -64,6 +64,7 @@ export interface BoardStory {
   start_date: string | null
   due_date: string | null
   rank: number | null
+  story_points: number | null
   depends_on: string[]
 }
 
@@ -93,6 +94,7 @@ export interface StoryDetail {
   start_date: string | null
   due_date: string | null
   rank: number | null
+  story_points: number | null
   depends_on: string[]
 }
 
@@ -102,6 +104,8 @@ export interface UpdateStoryFields {
   start_date?: string
   due_date?: string
   rank?: number
+  priority?: number
+  story_points?: number
 }
 
 export const boardApi = {

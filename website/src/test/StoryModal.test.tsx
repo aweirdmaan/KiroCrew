@@ -3,6 +3,7 @@ import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { renderWithProviders } from './helpers'
 import StoryModal from '../apps/board/StoryModal'
 import { boardApi, type BoardStory, type PhaseDef, type StoryDetail, type RunRecord } from '../apps/board/boardApi'
+import { i18nT } from '../i18n/t'
 
 vi.mock('../apps/board/boardApi', async () => {
   const actual = await vi.importActual<typeof import('../apps/board/boardApi')>('../apps/board/boardApi')
@@ -31,17 +32,21 @@ vi.mock('../components/LiveLogPanel', () => ({
   ),
 }))
 
+// Matches the REAL current shape (phases.py's single "pipeline" job, see
+// its module docstring) rather than the old, now-retired per-column split -
+// a test fixture using stale phase keys would mask the exact legacy-phase
+// normalization this file also tests below.
 const PHASES: PhaseDef[] = [
-  { key: 'planning', label: 'Planning', tasks: ['ideate', 'plan'], manual: false },
-  { key: 'implementation', label: 'Implementation', tasks: ['verify', 'fix', 'confirm'], manual: false },
+  { key: 'pipeline', label: 'Pipeline', tasks: ['ideate', 'plan', 'verify', 'fix', 'confirm'], manual: false },
 ]
 
 function story(overrides: Partial<BoardStory> = {}): BoardStory {
   return {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
-    phase: 'planning', phase_label: 'Planning', current_run: null,
+    phase: 'pipeline', phase_label: 'Pipeline', current_run: null,
     priority: null, owner: '', pending_open_questions: false,
+    start_date: null, due_date: null, rank: null, depends_on: [],
     ...overrides,
   };
 }
@@ -51,13 +56,14 @@ function detail(overrides: Partial<StoryDetail> = {}): StoryDetail {
     id: 's-1', title: 'Story one', description: '**bold** description', status: 'open',
     issue_type: 'task', priority: 2, owner: 'me', created_at: 't1', updated_at: 't2',
     comments: [{ id: 'c1', author: 'Amaan', text: 'first comment', created_at: 't3' }],
+    start_date: null, due_date: null, rank: null, story_points: null, depends_on: [],
     ...overrides,
   };
 }
 
 function run(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
-    phase: 'planning', task_key: 'ideate', iteration: 0, task_id: 'task-1',
+    phase: 'pipeline', task_key: 'ideate', iteration: 0, task_id: 'task-1',
     status: 'passed', started_at: 't1', finished_at: 't2',
     ...overrides,
   };
@@ -88,19 +94,12 @@ describe('StoryModal', () => {
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-planning');
-    fireEvent.click(within(job).getByRole('button', { name: /Planning/ }));
-    await waitFor(() => expect(within(job).getByTestId('board-timeline-row')).toBeInTheDocument());
-    const row = within(job).getByTestId('board-timeline-row');
-    // The expand toggle is the inner <button>, not the outer row container a
-    // click on the testid'd div itself would not reach (click handlers don't
-    // fire from a parent's click target).
-    fireEvent.click(within(row).getByRole('button'));
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
 
-    // Scoped to the row: the job's own structural view (default tab "live")
-    // also renders a log panel for its latest task, so a page-wide query
-    // would match two elements once this row expands too.
-    const panel = await within(row).findByTestId('stub-live-log-panel');
+    // Live is the default tab - the single "ideate" entry is its own
+    // effective task automatically, no row to expand into any more.
+    const panel = await within(job).findByTestId('stub-live-log-panel');
     expect(panel).toHaveAttribute('data-active', 'true');
     expect(panel).toHaveAttribute('data-task-id', 'task-1');
   });
@@ -114,44 +113,48 @@ describe('StoryModal', () => {
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-planning');
-    expect(within(job).queryByTestId('board-timeline-row')).toBeNull();
-    expect(within(job).queryByTestId('board-job-planning-view-content')).toBeNull();
+    const job = await screen.findByTestId('board-job-pipeline');
+    expect(within(job).queryByTestId('board-job-pipeline-view-content')).toBeNull();
   });
 
-  it('groups timeline entries by job (phase), with multiple tasks nested under one job', async () => {
+  it('groups timeline entries by job (phase), with multiple tasks nested under one job - not one job per task', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail());
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
       history: [
-        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
-        run({ phase: 'implementation', task_key: 'fix', status: 'passed' }),
-        run({ phase: 'implementation', task_key: 'confirm', status: 'gate_failed' }),
+        run({ phase: 'pipeline', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'pipeline', task_key: 'fix', status: 'passed' }),
+        run({ phase: 'pipeline', task_key: 'confirm', status: 'gate_failed' }),
       ],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    await waitFor(() => expect(screen.getByTestId('board-job-implementation')).toBeInTheDocument());
-    const job = screen.getByTestId('board-job-implementation');
-    fireEvent.click(within(job).getByRole('button', { name: /Implementation/ }));
-    expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3);
+    await waitFor(() => expect(screen.getByTestId('board-job-pipeline')).toBeInTheDocument());
+    expect(screen.queryAllByTestId(/^board-job-/)).toHaveLength(1); // one job, three tasks inside it
+    const job = screen.getByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+    fireEvent.click(within(job).getByTestId('board-job-pipeline-view-dag'));
+    const content = within(job).getByTestId('board-job-pipeline-view-content');
+    await waitFor(() => expect(within(content).getByText('verify')).toBeInTheDocument());
+    expect(within(content).getByText('fix')).toBeInTheDocument();
+    expect(within(content).getByText('confirm')).toBeInTheDocument();
   });
 
   it('a job defaults to the Live view, showing its latest/selected task\'s log', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail());
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
-      history: [run({ status: 'passed', task_id: 'task-planning' })],
+      history: [run({ status: 'passed', task_id: 'task-ideate' })],
     });
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-planning');
-    fireEvent.click(within(job).getByRole('button', { name: /Planning/ }));
-    expect(within(job).getByTestId('board-job-planning-view-live')).toHaveClass('bg-accent');
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+    expect(within(job).getByTestId('board-job-pipeline-view-live')).toHaveClass('bg-accent');
     const panel = within(job).getByTestId('stub-live-log-panel');
-    expect(panel).toHaveAttribute('data-task-id', 'task-planning');
+    expect(panel).toHaveAttribute('data-task-id', 'task-ideate');
   });
 
   it('switching a job to the DAG view renders one node per task, in order', async () => {
@@ -159,21 +162,18 @@ describe('StoryModal', () => {
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
       history: [
-        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
-        run({ phase: 'implementation', task_key: 'fix', status: 'passed' }),
+        run({ phase: 'pipeline', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'pipeline', task_key: 'fix', status: 'passed' }),
       ],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-implementation');
-    fireEvent.click(within(job).getByRole('button', { name: /Implementation/ }));
-    fireEvent.click(within(job).getByTestId('board-job-implementation-view-dag'));
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+    fireEvent.click(within(job).getByTestId('board-job-pipeline-view-dag'));
 
-    // Scoped to the view-content wrapper, not the whole job: the flat
-    // attempt log below also renders each task_key as text, which would
-    // otherwise make these an ambiguous "found multiple elements" match.
-    const content = within(job).getByTestId('board-job-implementation-view-content');
+    const content = within(job).getByTestId('board-job-pipeline-view-content');
     // DagView renders each node's title as SVG text - "confirm" never ran,
     // so it should still appear as a pending node (fed from the job's own
     // task list, not only from entries that have happened).
@@ -187,24 +187,77 @@ describe('StoryModal', () => {
     vi.mocked(boardApi.history).mockResolvedValue({
       current_run: null,
       history: [
-        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
-        run({ phase: 'implementation', task_key: 'fix', status: 'passed', iteration: 0 }),
-        run({ phase: 'implementation', task_key: 'fix', status: 'gate_failed', iteration: 1 }),
+        run({ phase: 'pipeline', task_key: 'verify', status: 'passed' }),
+        run({ phase: 'pipeline', task_key: 'fix', status: 'passed', iteration: 0 }),
+        run({ phase: 'pipeline', task_key: 'fix', status: 'gate_failed', iteration: 1 }),
       ],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    const job = await screen.findByTestId('board-job-implementation');
-    fireEvent.click(within(job).getByRole('button', { name: /Implementation/ }));
-    fireEvent.click(within(job).getByTestId('board-job-implementation-view-phased'));
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+    fireEvent.click(within(job).getByTestId('board-job-pipeline-view-phased'));
 
     // PhasedView renders a task's title inline as "Task N: <title>" (one
     // combined text node), so an exact match on just "fix" would never hit -
     // a substring matcher is the correct query here, not a workaround.
-    const content = within(job).getByTestId('board-job-implementation-view-content');
+    const content = within(job).getByTestId('board-job-pipeline-view-content');
     await waitFor(() => expect(within(content).getByText(/fix/)).toBeInTheDocument());
-    expect(within(job).getAllByTestId('board-timeline-row')).toHaveLength(3); // unaffected by the tab switch
+  });
+
+  it('shows one attempt pill per retry of a task, switching the shared log pane between them', async () => {
+    // Airflow's own "try number" pattern, replacing the old flat
+    // per-attempt accordion list (an accordion nested inside the job's
+    // own accordion) - one task with several attempts gets a row of
+    // small pills, not a disclosure widget per attempt.
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [
+        run({ phase: 'pipeline', task_key: 'fix', iteration: 0, status: 'gate_failed', task_id: 'fix-1' }),
+        run({ phase: 'pipeline', task_key: 'fix', iteration: 1, status: 'passed', task_id: 'fix-2' }),
+      ],
+    });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+
+    expect(within(job).getByTestId('board-attempt-fix-0')).toBeInTheDocument();
+    expect(within(job).getByTestId('board-attempt-fix-1')).toBeInTheDocument();
+    // Latest attempt selected by default.
+    let panel = await within(job).findByTestId('stub-live-log-panel');
+    expect(panel).toHaveAttribute('data-task-id', 'fix-2');
+
+    fireEvent.click(within(job).getByTestId('board-attempt-fix-0'));
+    panel = await within(job).findByTestId('stub-live-log-panel');
+    expect(panel).toHaveAttribute('data-task-id', 'fix-1');
+  });
+
+  it('normalizes a legacy per-column phase string onto the one consolidated pipeline job', async () => {
+    // History recorded before phases.py merged every column into "pipeline"
+    // still carries the old strings - a story with history from before that
+    // merge should still read as ONE job, not a single-task accordion per
+    // retired column.
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [
+        run({ phase: 'grooming', task_key: 'ideate', status: 'passed' }),
+        run({ phase: 'planning', task_key: 'plan', status: 'passed' }),
+        run({ phase: 'implementation', task_key: 'verify', status: 'passed' }),
+      ],
+    });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-job-pipeline')).toBeInTheDocument());
+    expect(screen.queryAllByTestId(/^board-job-/)).toHaveLength(1);
+    expect(screen.queryByTestId('board-job-grooming')).toBeNull();
+    expect(screen.queryByTestId('board-job-planning')).toBeNull();
+    expect(screen.getByText(i18nT('apps.board.task_count', { count: 5 }))).toBeInTheDocument();
   });
 
   it('shows the needs-human banner when the last comment is unanswered open questions', async () => {
@@ -221,11 +274,11 @@ describe('StoryModal', () => {
   it('shows the needs-human banner on a gate_failed run', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail({ comments: [] }));
     vi.mocked(boardApi.history).mockResolvedValue({
-      current_run: { phase: 'implementation', task_key: 'confirm', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
+      current_run: { phase: 'pipeline', task_key: 'confirm', iteration: 0, task_id: 't-1', status: 'gate_failed', started_at: 't', finished_at: 't2' },
       history: [],
     });
 
-    renderWithProviders(<StoryModal story={story({ phase: 'implementation', phase_label: 'Implementation' })} phases={PHASES} onClose={() => {}} />);
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
     await waitFor(() => expect(screen.getByTestId('board-modal-needs-human')).toBeInTheDocument());
     expect(screen.getByTestId('board-modal-needs-human')).toHaveTextContent('Needs attention');
@@ -340,6 +393,65 @@ describe('StoryModal', () => {
     await waitFor(() => expect(boardApi.addComment).toHaveBeenCalledWith('s-1', '_(edited)_\n\ncorrected text'));
     // the original comment is still rendered, not replaced
     expect(screen.getByText('first comment')).toBeInTheDocument();
+  });
+
+  it('shows a side panel with the color-coded epic, priority, story points, and schedule', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({
+      priority: 1, start_date: '2026-10-01', due_date: '2026-10-15T00:00:00Z',
+      story_points: 5, owner: 'amaan',
+    }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const sidebar = await screen.findByTestId('board-sidebar');
+    expect(within(sidebar).getByText('Calculator App')).toBeInTheDocument();
+    await waitFor(() => expect(within(sidebar).getByTestId('board-sidebar-priority')).toHaveValue('1'));
+    expect(within(sidebar).getByTestId('board-sidebar-story-points')).toHaveTextContent('5');
+    expect(within(sidebar).getByTestId('board-sidebar-start-date')).toHaveValue('2026-10-01');
+    expect(within(sidebar).getByTestId('board-sidebar-due-date')).toHaveValue('2026-10-15');
+    expect(within(sidebar).getByText('amaan')).toBeInTheDocument();
+  });
+
+  it('editing priority in the sidebar calls updateStory immediately', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ priority: 2 }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const sidebar = await screen.findByTestId('board-sidebar');
+    fireEvent.change(within(sidebar).getByTestId('board-sidebar-priority'), { target: { value: '0' } });
+
+    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { priority: 0 }));
+  });
+
+  it('editing story points in the sidebar commits on blur', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ story_points: null }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const sidebar = await screen.findByTestId('board-sidebar');
+    fireEvent.click(within(sidebar).getByTestId('board-sidebar-story-points'));
+    fireEvent.change(within(sidebar).getByTestId('board-sidebar-story-points-input'), { target: { value: '8' } });
+    fireEvent.blur(within(sidebar).getByTestId('board-sidebar-story-points-input'));
+
+    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { story_points: 8 }));
+  });
+
+  it('editing the start date in the sidebar calls updateStory', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const sidebar = await screen.findByTestId('board-sidebar');
+    fireEvent.change(within(sidebar).getByTestId('board-sidebar-start-date'), { target: { value: '2026-11-01' } });
+
+    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { start_date: '2026-11-01' }));
   });
 
   it('closing the modal calls onClose', async () => {

@@ -46,11 +46,8 @@ async def get_story_detail(project_path: str, story_id: str) -> dict | None:
         dep["depends_on_id"] for dep in (issue.get("dependencies") or [])
         if isinstance(dep, dict) and dep.get("type") != "parent-child" and dep.get("depends_on_id")
     ]
-    rank = metadata.get("timeline_rank")
-    try:
-        rank = float(rank) if rank is not None else None
-    except (TypeError, ValueError):
-        rank = None
+    rank = _coerce_float(metadata.get("timeline_rank"))
+    story_points = _coerce_float(metadata.get("story_points"))
     return {
         "id": issue.get("id", story_id),
         "title": issue.get("title", ""),
@@ -65,8 +62,18 @@ async def get_story_detail(project_path: str, story_id: str) -> dict | None:
         "start_date": metadata.get("start_date"),
         "due_date": issue.get("due_at"),
         "rank": rank,
+        "story_points": story_points,
         "depends_on": depends_on,
     }
+
+
+def _coerce_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 async def add_comment(project_path: str, story_id: str, text: str) -> bool:
@@ -80,15 +87,17 @@ async def update_story(
     project_path: str, story_id: str, *,
     title: str | None = None, description: str | None = None,
     start_date: str | None = None, due_date: str | None = None, rank: float | None = None,
+    priority: int | None = None, story_points: float | None = None,
 ) -> bool:
     """Edit the card itself via `bd update`. Unlike comments, beads issue
     fields are plain mutable columns - no embedded-mode restriction here
     (see add_comment's docstring/the board's comment "edit" for why that
     one has to work differently).
 
-    start_date/rank ride on beads' free-form --set-metadata (beads has no
-    native "start date" or manual-ordering concept); due_date is the native
-    --due field. See stories.py's module comment for why."""
+    start_date/rank/story_points ride on beads' free-form --set-metadata
+    (beads has no native "start date", manual-ordering, or story-points
+    concept); due_date and priority are native fields. See stories.py's
+    module comment for why."""
     args: list[str] = ["update", story_id]
     if title is not None:
         args += ["--title", title]
@@ -96,10 +105,14 @@ async def update_story(
         args += ["--description", description]
     if due_date is not None:
         args += ["--due", due_date]
+    if priority is not None:
+        args += ["--priority", str(priority)]
     if start_date is not None:
         args += ["--set-metadata", f"start_date={start_date}"]
     if rank is not None:
         args += ["--set-metadata", f"timeline_rank={rank}"]
+    if story_points is not None:
+        args += ["--set-metadata", f"story_points={story_points}"]
     if len(args) == 2:
         return False
     result = await run_bd(project_path, *args)

@@ -30,6 +30,7 @@ _PHASES_WHERE_QUESTIONS_MAY_BE_PENDING = {"pipeline"}
 # fractional-ranking technique for a user-reorderable list).
 _START_DATE_METADATA_KEY = "start_date"
 _RANK_METADATA_KEY = "timeline_rank"
+_STORY_POINTS_METADATA_KEY = "story_points"
 
 
 @dataclass
@@ -49,6 +50,7 @@ class StorySummary:
     start_date: str | None
     due_date: str | None
     rank: float | None
+    story_points: float | None
     depends_on: list[str] = field(default_factory=list)
 
 
@@ -127,6 +129,7 @@ async def list_stories(project_path: str) -> list[StorySummary]:
             start_date=metadata.get(_START_DATE_METADATA_KEY),
             due_date=row.get("due_at"),
             rank=_coerce_rank(metadata.get(_RANK_METADATA_KEY)),
+            story_points=_coerce_rank(metadata.get(_STORY_POINTS_METADATA_KEY)),
             depends_on=depends_on,
         ))
     return summaries

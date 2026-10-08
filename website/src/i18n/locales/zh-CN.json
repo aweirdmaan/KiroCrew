@@ -5280,7 +5280,15 @@
       "status_cancelled": "已取消",
       "zoom_week": "周",
       "zoom_quarter": "季度",
-      "schedule_story": "安排日程"
+      "schedule_story": "安排日程",
+      "sidebar_epic": "故事集",
+      "sidebar_priority": "优先级",
+      "sidebar_story_points": "故事点数",
+      "sidebar_unset": "无",
+      "sidebar_start_date": "开始日期",
+      "sidebar_due_date": "截止日期",
+      "sidebar_owner": "负责人",
+      "attempt_try": "尝试 {{n}}"
     }
   },
   "autoImprovement": {

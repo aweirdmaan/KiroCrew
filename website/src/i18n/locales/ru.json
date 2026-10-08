@@ -5550,7 +5550,15 @@
       "status_cancelled": "Отменено",
       "zoom_week": "Неделя",
       "zoom_quarter": "Квартал",
-      "schedule_story": "Запланировать"
+      "schedule_story": "Запланировать",
+      "sidebar_epic": "Эпик",
+      "sidebar_priority": "Приоритет",
+      "sidebar_story_points": "Очки истории",
+      "sidebar_unset": "Нет",
+      "sidebar_start_date": "Дата начала",
+      "sidebar_due_date": "Срок выполнения",
+      "sidebar_owner": "Ответственный",
+      "attempt_try": "Попытка {{n}}"
     }
   },
   "autoImprovement": {

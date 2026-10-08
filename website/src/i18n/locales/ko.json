@@ -5280,7 +5280,15 @@
       "status_cancelled": "취소됨",
       "zoom_week": "주",
       "zoom_quarter": "분기",
-      "schedule_story": "일정 설정"
+      "schedule_story": "일정 설정",
+      "sidebar_epic": "에픽",
+      "sidebar_priority": "우선순위",
+      "sidebar_story_points": "스토리 포인트",
+      "sidebar_unset": "없음",
+      "sidebar_start_date": "시작일",
+      "sidebar_due_date": "마감일",
+      "sidebar_owner": "담당자",
+      "attempt_try": "시도 {{n}}"
     }
   },
   "autoImprovement": {

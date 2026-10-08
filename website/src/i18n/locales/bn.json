@@ -5370,7 +5370,15 @@
       "status_cancelled": "বাতিল করা হয়েছে",
       "zoom_week": "সপ্তাহ",
       "zoom_quarter": "প্রন্তৈমাসিক",
-      "schedule_story": "নির্ধারিত করুন"
+      "schedule_story": "নির্ধারিত করুন",
+      "sidebar_epic": "এপিক",
+      "sidebar_priority": "অগ্রাধিকার",
+      "sidebar_story_points": "স্টোরি পয়েন্ট",
+      "sidebar_unset": "কোনোটি নয়",
+      "sidebar_start_date": "শুরুর তারিখ",
+      "sidebar_due_date": "শেষ তারিখ",
+      "sidebar_owner": "দায়িত্বপ্রাপ্ত",
+      "attempt_try": "চেষ্টা {{n}}"
     }
   },
   "autoImprovement": {

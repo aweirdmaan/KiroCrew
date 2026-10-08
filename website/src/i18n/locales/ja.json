@@ -5280,7 +5280,15 @@
       "status_cancelled": "キャンセルされました",
       "zoom_week": "週",
       "zoom_quarter": "四半期",
-      "schedule_story": "予定を設定"
+      "schedule_story": "予定を設定",
+      "sidebar_epic": "エピック",
+      "sidebar_priority": "優先度",
+      "sidebar_story_points": "ストーリーポイント",
+      "sidebar_unset": "なし",
+      "sidebar_start_date": "開始日",
+      "sidebar_due_date": "期限日",
+      "sidebar_owner": "担当者",
+      "attempt_try": "試行 {{n}}"
     }
   },
   "autoImprovement": {

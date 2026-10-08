@@ -78,6 +78,7 @@ async def list_board_stories(request: web.Request) -> web.Response:
                 "pending_open_questions": story.pending_open_questions,
                 "start_date": story.start_date, "due_date": story.due_date,
                 "rank": story.rank, "depends_on": story.depends_on,
+                "story_points": story.story_points,
             })
     return web.json_response({"stories": all_stories, "project_paths": project_paths})
 
@@ -176,12 +177,13 @@ async def add_story_comment(request: web.Request) -> web.Response:
 
 async def update_story_route(request: web.Request) -> web.Response:
     """POST /api/board/stories/{id}/update — edit the card itself. Body:
-    {"title"?, "description"?, "start_date"?, "due_date"?, "rank"?}, at
-    least one required. Unlike comments (append-only in beads, see
-    add_story_comment's sibling "edit" in the frontend), issue fields are
-    plain mutable columns via `bd update`, so this is a real in-place edit -
-    including the timeline's own scheduling fields (see stories.py's module
-    comment for where those actually live in beads)."""
+    {"title"?, "description"?, "start_date"?, "due_date"?, "rank"?,
+    "priority"?, "story_points"?}, at least one required. Unlike comments
+    (append-only in beads, see add_story_comment's sibling "edit" in the
+    frontend), issue fields are plain mutable columns via `bd update`, so
+    this is a real in-place edit - including the timeline/sidebar's own
+    scheduling and planning fields (see stories.py's module comment for
+    where those actually live in beads)."""
     story_id = request.match_info["id"]
     project_path = await _find_story_project(story_id)
     if project_path is None:
@@ -195,6 +197,8 @@ async def update_story_route(request: web.Request) -> web.Response:
     start_date = body.get("start_date")
     due_date = body.get("due_date")
     rank = body.get("rank")
+    priority = body.get("priority")
+    story_points = body.get("story_points")
     if title is not None and (not isinstance(title, str) or not title.strip()):
         return web.json_response({"error": "title cannot be blank", "code": "empty_title"}, status=400)
     if description is not None and not isinstance(description, str):
@@ -205,11 +209,16 @@ async def update_story_route(request: web.Request) -> web.Response:
         return web.json_response({"error": "due_date must be a string", "code": "bad_due_date"}, status=400)
     if rank is not None and not isinstance(rank, (int, float)):
         return web.json_response({"error": "rank must be a number", "code": "bad_rank"}, status=400)
-    if title is None and description is None and start_date is None and due_date is None and rank is None:
+    if priority is not None and (not isinstance(priority, int) or isinstance(priority, bool) or not 0 <= priority <= 4):
+        return web.json_response({"error": "priority must be an integer 0-4", "code": "bad_priority"}, status=400)
+    if story_points is not None and not isinstance(story_points, (int, float)):
+        return web.json_response({"error": "story_points must be a number", "code": "bad_story_points"}, status=400)
+    if all(v is None for v in (title, description, start_date, due_date, rank, priority, story_points)):
         return web.json_response({"error": "nothing to update", "code": "empty_update"}, status=400)
     ok = await board_detail.update_story(
         project_path, story_id, title=title, description=description,
         start_date=start_date, due_date=due_date, rank=rank,
+        priority=priority, story_points=story_points,
     )
     if not ok:
         return web.json_response({"error": "bd update failed", "code": "bd_unavailable"}, status=502)

@@ -194,13 +194,14 @@ async def test_reads_timeline_scheduling_fields_from_due_at_and_metadata(tmp_pat
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
          "parent": "epic-1", "status": "open",
          "due_at": "2026-10-15T00:00:00Z",
-         "metadata": {"start_date": "2026-10-01", "timeline_rank": 2.5}},
+         "metadata": {"start_date": "2026-10-01", "timeline_rank": 2.5, "story_points": 8}},
     ]
     with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].start_date == "2026-10-01"
     assert summaries[0].due_date == "2026-10-15T00:00:00Z"
     assert summaries[0].rank == 2.5
+    assert summaries[0].story_points == 8.0
 
 
 @pytest.mark.asyncio
@@ -215,6 +216,7 @@ async def test_missing_scheduling_fields_default_to_none(tmp_path):
     assert summaries[0].start_date is None
     assert summaries[0].due_date is None
     assert summaries[0].rank is None
+    assert summaries[0].story_points is None
     assert summaries[0].depends_on == []
 
 

@@ -33,6 +33,7 @@ import { Badge } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { boardApi, type BoardStory, type PhaseDef } from './boardApi'
 import { needsHuman, NEEDS_HUMAN_LABEL_KEY } from './needsHuman'
+import { epicAccent } from './epicColor'
 import StoryModal from './StoryModal'
 import { i18nT } from '../../i18n/t'
 
@@ -49,21 +50,6 @@ const PX_PER_DAY: Record<Zoom, number> = { week: 32, quarter: 6 }
 const SPAN_DAYS: Record<Zoom, number> = { week: 140, quarter: 540 }
 const LEAD_DAYS: Record<Zoom, number> = { week: 21, quarter: 90 }
 
-// A small fixed palette, picked deterministically per epic so the same
-// epic always gets the same accent (not randomized per render/reload) -
-// purely a visual grouping cue, same idea as Jira's per-epic color chip.
-const EPIC_ACCENTS = [
-  { bar: 'bg-accent', text: 'text-accent' },
-  { bar: 'bg-aim', text: 'text-aim' },
-  { bar: 'bg-ok', text: 'text-ok' },
-  { bar: 'bg-warn', text: 'text-warn' },
-  { bar: 'bg-danger', text: 'text-danger' },
-]
-function epicAccent(epicId: string): { bar: string; text: string } {
-  let h = 0
-  for (let i = 0; i < epicId.length; i++) h = (h * 31 + epicId.charCodeAt(i)) >>> 0
-  return EPIC_ACCENTS[h % EPIC_ACCENTS.length]
-}
 
 function parseDate(s: string | null): Date | null {
   if (!s) return null

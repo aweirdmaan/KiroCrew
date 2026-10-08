@@ -5216,7 +5216,15 @@
       "status_cancelled": "[Çàñçèĺĺèð ··············]",
       "zoom_week": "[Ẁèèķ ······]",
       "zoom_quarter": "[Ǫùàŕţèŕ ···········]",
-      "schedule_story": "[Şçĥèðùĺè ············]"
+      "schedule_story": "[Şçĥèðùĺè ············]",
+      "sidebar_epic": "[Èþìç ······]",
+      "sidebar_priority": "[Þŕìøŕìţý ············]",
+      "sidebar_story_points": "[Şţøŕý þøìñţş ···········]",
+      "sidebar_unset": "[Ñøñè ······]",
+      "sidebar_start_date": "[Şţàŕţ ðàţè ···············]",
+      "sidebar_due_date": "[Ðùè ðàţè ············]",
+      "sidebar_owner": "[Àşşìğñèè ············]",
+      "attempt_try": "[Ţŕý {{n}} ······]"
     }
   },
   "components": {

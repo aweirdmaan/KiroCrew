@@ -1500,7 +1500,15 @@
       "status_cancelled": "Cancelled",
       "zoom_week": "Week",
       "zoom_quarter": "Quarter",
-      "schedule_story": "Schedule"
+      "schedule_story": "Schedule",
+      "sidebar_epic": "Epic",
+      "sidebar_priority": "Priority",
+      "sidebar_story_points": "Story points",
+      "sidebar_unset": "None",
+      "sidebar_start_date": "Start date",
+      "sidebar_due_date": "Due date",
+      "sidebar_owner": "Assignee",
+      "attempt_try": "Try {{n}}"
     }
   },
   "components": {

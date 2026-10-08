@@ -5370,7 +5370,15 @@
       "status_cancelled": "Abgebrochen",
       "zoom_week": "Woche",
       "zoom_quarter": "Quartal",
-      "schedule_story": "Terminieren"
+      "schedule_story": "Terminieren",
+      "sidebar_epic": "Epic",
+      "sidebar_priority": "Priorität",
+      "sidebar_story_points": "Story Points",
+      "sidebar_unset": "Keine",
+      "sidebar_start_date": "Startdatum",
+      "sidebar_due_date": "Fälligkeitsdatum",
+      "sidebar_owner": "Zuständig",
+      "attempt_try": "Versuch {{n}}"
     }
   },
   "autoImprovement": {

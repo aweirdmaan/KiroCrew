@@ -5370,7 +5370,15 @@
       "status_cancelled": "रद्द कर दिया गया",
       "zoom_week": "सप्ताह",
       "zoom_quarter": "तिमाही",
-      "schedule_story": "अनुसूचित करें"
+      "schedule_story": "अनुसूचित करें",
+      "sidebar_epic": "एपिक",
+      "sidebar_priority": "प्राथमिकता",
+      "sidebar_story_points": "स्टोरी पॉइंट",
+      "sidebar_unset": "कोई नहीं",
+      "sidebar_start_date": "आरंभ तिथि",
+      "sidebar_due_date": "नियत तिथि",
+      "sidebar_owner": "सौंपा व्यक्ति",
+      "attempt_try": "प्रयास {{n}}"
     }
   },
   "autoImprovement": {

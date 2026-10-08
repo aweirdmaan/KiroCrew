@@ -17,12 +17,25 @@ import { LiveLogPanel } from '../../components/LiveLogPanel'
 import DagView from '../../pages/aidlc/DagView'
 import PhasedView from '../../pages/aidlc/PhasedView'
 import type { TaskDetail } from '../../types'
-import { boardApi, type BoardStory, type RunRecord, type PhaseDef, type BeadsComment } from './boardApi'
+import { boardApi, type BoardStory, type RunRecord, type PhaseDef, type BeadsComment, type StoryDetail } from './boardApi'
 import { findPendingOpenQuestions, formatAnswers, type ParsedQuestion } from './openQuestions'
 import { needsHuman, NEEDS_HUMAN_LABEL_KEY } from './needsHuman'
+import { epicAccent } from './epicColor'
 import { i18nT } from '../../i18n/t'
 
 const POLL_MS = 3000
+
+// Phase keys that existed before phases.py merged ideate..retro into one
+// "pipeline" job - a story whose history predates that merge still has
+// entries tagged with these, and they all belong to today's single
+// "pipeline" job. "review"/"done" were never split out of anything, so
+// they're left alone.
+const LEGACY_PIPELINE_PHASES = new Set([
+  'grooming', 'planning', 'plan_review', 'approval', 'implementation', 'verification', 'pr',
+])
+function normalizeLegacyPhaseKey(phase: string): string {
+  return LEGACY_PIPELINE_PHASES.has(phase) ? 'pipeline' : phase
+}
 
 function statusVariant(status: string): 'ok' | 'err' | 'warn' | 'aim' | 'muted' {
   if (status === 'passed') return 'ok'
@@ -32,31 +45,40 @@ function statusVariant(status: string): 'ok' | 'err' | 'warn' | 'aim' | 'muted' 
   return 'muted'
 }
 
-function TaskRow({ entry }: { entry: RunRecord }) {
-  const [open, setOpen] = useState(false)
+/** One row per attempt of the CURRENTLY selected task, Airflow's own
+ * "try number" pattern: small pills across the top, one shared log pane
+ * below reflecting whichever is selected - not a disclosure widget per
+ * attempt. A looping job (the implement task, or verify->fix->confirm)
+ * can run the same task several times; this is how any one of those past
+ * attempts stays inspectable without nesting an accordion inside the
+ * job's own accordion. */
+function AttemptPills({
+  entries, selectedIteration, onSelect,
+}: {
+  entries: RunRecord[]
+  selectedIteration: number | null
+  onSelect: (iteration: number) => void
+}) {
+  if (entries.length < 2) return null
+  const effective = selectedIteration ?? entries[entries.length - 1].iteration
   return (
-    <div className="border border-border rounded-lg overflow-hidden" data-testid="board-timeline-row">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-1.5 bg-bg-elevated text-left cursor-pointer"
-      >
-        <span className="flex items-center gap-2 text-[12px] text-text">
-          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          <span className="font-medium">{entry.task_key}</span>
-          {entry.iteration > 0 && <span className="text-muted">#{entry.iteration + 1}</span>}
-        </span>
-        <Badge variant={statusVariant(entry.status)} className="text-[10px]">{entry.status}</Badge>
-      </button>
-      {open && entry.task_id && (
-        <div className="p-2 border-t border-border">
-          {/* Always active: the backend replays a finished run's full log
-           * from disk regardless of its terminal status - gating this on
-           * entry.status === 'running' (the original bug here) meant every
-           * already-finished task silently showed nothing. */}
-          <LiveLogPanel taskId={entry.task_id} active />
-        </div>
-      )}
+    <div className="flex items-center gap-1 flex-wrap" data-testid="board-attempt-pills">
+      {entries.map(e => (
+        <button
+          key={e.iteration}
+          type="button"
+          onClick={() => onSelect(e.iteration)}
+          className={`flex items-center gap-1 text-[10px] pl-2 pr-1.5 py-0.5 rounded-full border cursor-pointer transition-colors ${
+            e.iteration === effective
+              ? 'border-accent text-accent bg-accent/10'
+              : 'border-border text-muted hover:text-text'
+          }`}
+          data-testid={`board-attempt-${e.task_key}-${e.iteration}`}
+        >
+          {i18nT('apps.board.attempt_try', { n: e.iteration + 1 })}
+          <Badge variant={statusVariant(e.status)} className="text-[9px]">{e.status}</Badge>
+        </button>
+      ))}
     </div>
   );
 }
@@ -87,6 +109,10 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<JobViewMode>('live')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // null = "latest attempt of the selected task" - reset whenever the
+  // selected TASK changes (a fresh task's own latest attempt, not whatever
+  // iteration number happened to be selected on the last task).
+  const [selectedIteration, setSelectedIteration] = useState<number | null>(null)
 
   // taskKeys comes from the job's OWN definition (/api/board/phases), so a
   // not-yet-run task still shows up as a "pending" node - entries only
@@ -109,7 +135,16 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
     ?? keys.find(k => latestByKey.get(k)?.status === 'running')
     ?? [...keys].reverse().find(k => latestByKey.has(k))
     ?? keys[0];
-  const selectedEntry = effectiveKey ? latestByKey.get(effectiveKey) : undefined;
+
+  const selectKey = (key: string | null) => { setSelectedKey(key); setSelectedIteration(null) }
+
+  const entriesForKey = useMemo(
+    () => entries.filter(e => e.task_key === effectiveKey).sort((a, b) => a.iteration - b.iteration),
+    [entries, effectiveKey],
+  );
+  const selectedEntry = selectedIteration !== null
+    ? entriesForKey.find(e => e.iteration === selectedIteration) ?? entriesForKey[entriesForKey.length - 1]
+    : entriesForKey[entriesForKey.length - 1];
 
   const dagNodes = keys.map((key, i) => ({
     id: String(i + 1), title: key, status: toTaskRunnerStatus(latestByKey.get(key)?.status),
@@ -159,30 +194,36 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
                 <DagView
                   nodes={dagNodes}
                   edges={dagEdges}
-                  onNodeClick={id => setSelectedKey(keys[Number(id) - 1] ?? null)}
+                  onNodeClick={id => selectKey(keys[Number(id) - 1] ?? null)}
                   selectedId={selectedIndex ? String(selectedIndex) : undefined}
                 />
               )}
               {view === 'phased' && (
                 <PhasedView
                   tasks={phasedTasks}
-                  onTaskClick={index => setSelectedKey(keys[index - 1] ?? null)}
+                  onTaskClick={index => selectKey(keys[index - 1] ?? null)}
                   selectedIndex={selectedIndex ?? null}
                 />
               )}
               {view === 'live' && (
-                selectedEntry?.task_id ? (
-                  <LiveLogPanel taskId={selectedEntry.task_id} active />
-                ) : (
-                  <div className="text-[12px] text-muted px-1">{i18nT('apps.board.no_log_yet')}</div>
-                )
+                <div className="flex flex-col gap-2">
+                  {/* Airflow's own "try number" pattern: pills across the
+                   * top pick WHICH attempt of the currently selected task
+                   * to show, one shared log pane below - not a disclosure
+                   * widget nested per attempt. */}
+                  <AttemptPills
+                    entries={entriesForKey}
+                    selectedIteration={selectedIteration}
+                    onSelect={setSelectedIteration}
+                  />
+                  {selectedEntry?.task_id ? (
+                    <LiveLogPanel taskId={selectedEntry.task_id} active />
+                  ) : (
+                    <div className="text-[12px] text-muted px-1">{i18nT('apps.board.no_log_yet')}</div>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {entries.map((entry, i) => (
-              <TaskRow key={`${entry.task_key}-${entry.iteration}-${entry.task_id ?? i}`} entry={entry} />
-            ))}
           </div>
         </div>
       )}
@@ -400,6 +441,115 @@ function CommentComposer({ storyId }: { storyId: string }) {
   );
 }
 
+const PRIORITY_LEVELS = [0, 1, 2, 3, 4]
+
+/** Jira-style right rail: epic (color-coded, same hash as the timeline's
+ * own epic dot - see epicColor.ts), priority, story points, and schedule -
+ * all editable inline, same generic update_story endpoint the timeline's
+ * drag-to-reschedule already uses. Kept separate from the main column so
+ * glanceable metadata doesn't compete with the description/comments/DAG
+ * for width, same split Jira's own issue view makes. */
+function StorySidebar({ story, detail, onUpdate, busy }: {
+  story: BoardStory
+  detail: StoryDetail | undefined
+  onUpdate: (fields: Parameters<typeof boardApi.updateStory>[1]) => void
+  busy: boolean
+}) {
+  const accent = epicAccent(story.epic_id)
+  const [pointsDraft, setPointsDraft] = useState('')
+  const [editingPoints, setEditingPoints] = useState(false)
+
+  const commitPoints = () => {
+    setEditingPoints(false)
+    const n = Number(pointsDraft)
+    if (pointsDraft.trim() !== '' && !Number.isNaN(n)) onUpdate({ story_points: n })
+  }
+
+  return (
+    <aside className="w-[240px] shrink-0 flex flex-col gap-4 border-l border-border pl-5" data-testid="board-sidebar">
+      <div>
+        <div className="text-[11px] font-medium text-muted mb-1">{i18nT('apps.board.sidebar_epic')}</div>
+        <div className="flex items-center gap-1.5 text-[13px] text-text">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${accent.bar}`} />
+          <span className="truncate">{story.epic_title}</span>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[11px] font-medium text-muted mb-1">{i18nT('apps.board.sidebar_priority')}</div>
+        <select
+          value={detail?.priority ?? ''}
+          onChange={e => onUpdate({ priority: Number(e.target.value) })}
+          disabled={busy}
+          className="w-full px-2 py-1 text-[12px] rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+          data-testid="board-sidebar-priority"
+        >
+          <option value="" disabled>{i18nT('apps.board.sidebar_unset')}</option>
+          {PRIORITY_LEVELS.map(p => (
+            <option key={p} value={p}>{i18nT('apps.board.priority_short', { priority: p })}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <div className="text-[11px] font-medium text-muted mb-1">{i18nT('apps.board.sidebar_story_points')}</div>
+        {editingPoints ? (
+          <input
+            type="number"
+            value={pointsDraft}
+            onChange={e => setPointsDraft(e.target.value)}
+            onBlur={commitPoints}
+            onKeyDown={e => { if (e.key === 'Enter') commitPoints() }}
+            className="w-full px-2 py-1 text-[12px] rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent"
+            data-testid="board-sidebar-story-points-input"
+            autoFocus
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => { setPointsDraft(detail?.story_points != null ? String(detail.story_points) : ''); setEditingPoints(true) }}
+            className="w-full text-left px-2 py-1 text-[12px] rounded-md border border-transparent hover:border-border text-text cursor-pointer"
+            data-testid="board-sidebar-story-points"
+          >
+            {detail?.story_points ?? <span className="text-muted">{i18nT('apps.board.sidebar_unset')}</span>}
+          </button>
+        )}
+      </div>
+
+      <div>
+        <div className="text-[11px] font-medium text-muted mb-1">{i18nT('apps.board.sidebar_start_date')}</div>
+        <input
+          type="date"
+          value={detail?.start_date ?? ''}
+          onChange={e => onUpdate({ start_date: e.target.value })}
+          disabled={busy}
+          className="w-full px-2 py-1 text-[12px] rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+          data-testid="board-sidebar-start-date"
+        />
+      </div>
+
+      <div>
+        <div className="text-[11px] font-medium text-muted mb-1">{i18nT('apps.board.sidebar_due_date')}</div>
+        <input
+          type="date"
+          value={detail?.due_date ? detail.due_date.slice(0, 10) : ''}
+          onChange={e => onUpdate({ due_date: e.target.value })}
+          disabled={busy}
+          className="w-full px-2 py-1 text-[12px] rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+          data-testid="board-sidebar-due-date"
+        />
+      </div>
+
+      {detail?.owner && (
+        <div>
+          <div className="text-[11px] font-medium text-muted mb-1">{i18nT('apps.board.sidebar_owner')}</div>
+          <div className="text-[12px] text-text">{detail.owner}</div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
 export default function StoryModal({ story, phases, onClose }: {
   story: BoardStory
   phases: PhaseDef[]
@@ -426,8 +576,16 @@ export default function StoryModal({ story, phases, onClose }: {
     const all = current ? [...entries, current] : entries
     const byPhase = new Map<string, RunRecord[]>()
     for (const entry of all) {
-      if (!byPhase.has(entry.phase)) byPhase.set(entry.phase, [])
-      byPhase.get(entry.phase)!.push(entry)
+      // History recorded before phases.py merged ideate..retro into one
+      // "pipeline" job still carries the old per-column phase strings
+      // (grooming, planning, plan_review, approval, implementation,
+      // verification, pr) - normalize those so an old story's timeline
+      // reads as ONE consolidated job too, not one single-task accordion
+      // per legacy column. "review"/"done" are unaffected - still their
+      // own thing, same as always.
+      const key = normalizeLegacyPhaseKey(entry.phase)
+      if (!byPhase.has(key)) byPhase.set(key, [])
+      byPhase.get(key)!.push(entry)
     }
     // Order jobs by the board's own phase order, not first-seen order, so the
     // timeline reads top-to-bottom the same way the board's columns do.
@@ -452,7 +610,7 @@ export default function StoryModal({ story, phases, onClose }: {
   const [descriptionDraft, setDescriptionDraft] = useState('')
 
   const updateMutation = useMutation({
-    mutationFn: (fields: { title?: string; description?: string }) => boardApi.updateStory(story.id, fields),
+    mutationFn: (fields: Parameters<typeof boardApi.updateStory>[1]) => boardApi.updateStory(story.id, fields),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['board', 'detail', story.id] })
       queryClient.invalidateQueries({ queryKey: ['board', 'stories'] })
@@ -512,7 +670,8 @@ export default function StoryModal({ story, phases, onClose }: {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
+        <div className="flex-1 overflow-y-auto px-5 py-4 flex gap-5">
+        <div className="flex-1 min-w-0 flex flex-col gap-5">
           {detailQuery.error && <ErrorNotice message={String(detailQuery.error)} />}
 
           {humanReason && (
@@ -610,6 +769,13 @@ export default function StoryModal({ story, phases, onClose }: {
               )}
             </div>
           </section>
+        </div>
+          <StorySidebar
+            story={story}
+            detail={detail}
+            busy={updateMutation.isPending}
+            onUpdate={fields => updateMutation.mutate(fields)}
+          />
         </div>
       </div>
     </div>

@@ -54,6 +54,7 @@ class TestListStories:
             project_path="/proj", phase="pipeline", phase_label="Pipeline", current_run=None,
             priority=1, owner="amaan", pending_open_questions=True,
             start_date="2026-10-01", due_date="2026-10-15T00:00:00Z", rank=1.5, depends_on=["s-0"],
+            story_points=5.0,
         )
         with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj"])), \
              patch.object(board_handlers, "list_stories", AsyncMock(return_value=[summary])):
@@ -67,6 +68,7 @@ class TestListStories:
         assert data["stories"][0]["due_date"] == "2026-10-15T00:00:00Z"
         assert data["stories"][0]["rank"] == 1.5
         assert data["stories"][0]["depends_on"] == ["s-0"]
+        assert data["stories"][0]["story_points"] == 5.0
 
 
 class TestRunStoryJob:
@@ -238,7 +240,7 @@ class TestUpdateStoryRoute:
         assert data == {"ok": True}
         mocked.assert_called_once_with(
             "/proj", "s-1", title="New title", description="New body",
-            start_date=None, due_date=None, rank=None,
+            start_date=None, due_date=None, rank=None, priority=None, story_points=None,
         )
 
     @pytest.mark.asyncio
@@ -254,7 +256,44 @@ class TestUpdateStoryRoute:
         mocked.assert_called_once_with(
             "/proj", "s-1", title=None, description=None,
             start_date="2026-10-01", due_date="2026-10-15", rank=2.5,
+            priority=None, story_points=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_updates_priority_and_story_points(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        body = {"priority": 1, "story_points": 5}
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=(body, None))), \
+             patch.object(board_handlers.board_detail, "update_story", AsyncMock(return_value=True)) as mocked:
+            resp = await board_handlers.update_story_route(req)
+        data = await _body(resp)
+        assert data == {"ok": True}
+        mocked.assert_called_once_with(
+            "/proj", "s-1", title=None, description=None,
+            start_date=None, due_date=None, rank=None,
+            priority=1, story_points=5,
+        )
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_priority_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"priority": 9}, None))):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "bad_priority"
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_story_points_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/update", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(return_value=({"story_points": "lots"}, None))):
+            resp = await board_handlers.update_story_route(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "bad_story_points"
 
     @pytest.mark.asyncio
     async def test_blank_title_is_400(self):

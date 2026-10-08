@@ -5460,7 +5460,15 @@
       "status_cancelled": "Cancelado",
       "zoom_week": "Semana",
       "zoom_quarter": "Trimestre",
-      "schedule_story": "Agendar"
+      "schedule_story": "Agendar",
+      "sidebar_epic": "Épico",
+      "sidebar_priority": "Prioridade",
+      "sidebar_story_points": "Pontos da história",
+      "sidebar_unset": "Nenhum",
+      "sidebar_start_date": "Data de início",
+      "sidebar_due_date": "Data de vencimento",
+      "sidebar_owner": "Responsável",
+      "attempt_try": "Tentativa {{n}}"
     }
   },
   "autoImprovement": {
