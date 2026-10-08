@@ -150,6 +150,37 @@ describe('TimelinePage', () => {
     ));
   });
 
+  it('rescheduling a bar also invalidates that story\'s own detail cache, not just the list', async () => {
+    // Regression: the modal's sidebar reads ['board','detail', id]
+    // separately from the timeline's ['board','stories'] list - a drag
+    // that only invalidated the list left an already-open modal showing
+    // stale dates until its own poll next happened to fire.
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ start_date: '2026-10-01', due_date: '2026-10-05' })],
+      project_paths: ['/proj'],
+    });
+    vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+    vi.mocked(boardApi.detail).mockResolvedValue({
+      id: 's-1', title: 'Story one', description: '', status: 'open',
+      issue_type: 'task', priority: null, owner: '', created_at: '', updated_at: '',
+      comments: [], start_date: '2026-10-01', due_date: '2026-10-05', rank: null, story_points: null, depends_on: [],
+    });
+
+    renderWithProviders(<TimelinePage />);
+    const row = await screen.findByTestId('timeline-row-s-1');
+    fireEvent.click(row.firstElementChild as Element); // opens the modal
+    await waitFor(() => expect(boardApi.detail).toHaveBeenCalledTimes(1));
+
+    const bar = screen.getByTestId('timeline-bar-s-1');
+    fireEvent.pointerDown(bar, { clientX: 100 });
+    fireEvent(document, new PointerEvent('pointermove', { clientX: 100 + 32 * 3, bubbles: true }));
+    fireEvent(document, new PointerEvent('pointerup', { clientX: 100 + 32 * 3, bubbles: true }));
+
+    await waitFor(() => expect(boardApi.detail).toHaveBeenCalledTimes(2));
+  });
+
   it('the dropped position sticks right away, before the server write resolves', async () => {
     // Regression: the old version reset the drag's visual offset to zero on
     // pointerup and waited for boardApi.updateStory's round trip (a real

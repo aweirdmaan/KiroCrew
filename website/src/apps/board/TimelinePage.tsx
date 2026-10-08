@@ -230,14 +230,33 @@ function StoryBar({
     e.preventDefault()
     const startX = e.clientX
     dragState.current = { mode, startX, startDate: start, dueDate: due }
+    // Pointer capture: without it, a fast real-world drag that briefly
+    // crosses another element with its own pointer handling (a resize
+    // handle, a sortable row's grip) can stop delivering move/up events to
+    // this gesture entirely, silently abandoning the drag mid-flight -
+    // exactly the kind of bug a slow, synthetic jsdom pointermove sequence
+    // in a test never reproduces. Capturing on the element that started the
+    // gesture is the standard fix.
+    try { (e.target as Element).setPointerCapture(e.pointerId) } catch { /* unsupported in some test environments */ }
     const onMove = (ev: PointerEvent) => {
       setDragPxDelta({ mode, delta: ev.clientX - startX })
     }
-    const onUp = (ev: PointerEvent) => {
+    const cleanup = () => {
       document.removeEventListener('pointermove', onMove)
       document.removeEventListener('pointerup', onUp)
-      const deltaDays = Math.round((ev.clientX - startX) / scale.pxPerDay)
+      document.removeEventListener('pointercancel', onCancel)
       setDragPxDelta(null)
+    }
+    const onCancel = () => {
+      // The gesture was interrupted (tab switch, OS-level gesture, etc.) -
+      // snap back to the pre-drag position rather than leaving stale
+      // listeners registered, which would otherwise pile up across drags
+      // and could fire a reschedule from an abandoned gesture's stale data.
+      cleanup()
+    }
+    const onUp = (ev: PointerEvent) => {
+      const deltaDays = Math.round((ev.clientX - startX) / scale.pxPerDay)
+      cleanup()
       if (deltaDays === 0) { if (mode === 'move') onOpen(); return }
       const state = dragState.current
       if (!state) return
@@ -250,6 +269,7 @@ function StoryBar({
     }
     document.addEventListener('pointermove', onMove)
     document.addEventListener('pointerup', onUp)
+    document.addEventListener('pointercancel', onCancel)
   }
 
   const humanReason = needsHuman(story, { key: story.phase ?? '', manual: story.phase === 'review' || story.phase === 'done' }, story.pending_open_questions)
@@ -317,7 +337,7 @@ function StoryRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition, height: ROW_H, opacity: isDragging ? 0.5 : 1 }}
-      className={`flex border-b border-border group ${striped ? 'bg-[var(--bg-hover)]/30' : ''} hover:bg-[var(--bg-hover)]/60 transition-colors`}
+      className={`flex group ${striped ? 'bg-[var(--bg-hover)]/30' : ''} hover:bg-[var(--bg-hover)]/60 transition-colors`}
       data-testid={`timeline-row-${story.id}`}
     >
       <div
@@ -495,41 +515,52 @@ function EpicSection({
     onReorder(arrayMove(stories, oldIndex, newIndex).map(s => s.id))
   }
 
+  // One bordered, rounded card for the WHOLE epic (header + rows), not a
+  // narrow label-width "tab" sitting above a much wider body - that mismatch
+  // (rounded-t on a 272px box, rounded-b on a multi-thousand-px one right
+  // below it) is what made the corners look broken. The header is a row
+  // with the exact same two-column split as every StoryRow beneath it, so
+  // the card's silhouette is consistent top to bottom.
   return (
-    <div className="mb-4" data-testid={`timeline-epic-${epicId}`}>
-      <button
-        type="button"
-        onClick={() => setCollapsed(c => !c)}
-        className="flex items-center gap-1.5 px-2 py-1.5 bg-bg-elevated border border-border rounded-t-md text-[12px] font-semibold text-text cursor-pointer w-full text-left"
-        style={{ width: LABEL_W }}
-        data-testid={`timeline-epic-toggle-${epicId}`}
-      >
-        {collapsed ? <ChevronRight size={13} className="text-muted shrink-0" /> : <ChevronDown size={13} className="text-muted shrink-0" />}
-        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${accent.bar}`} />
-        <span className="truncate">{epicTitle}</span>
-        <span className="text-muted font-normal shrink-0">({stories.length})</span>
-      </button>
+    <div className="mb-4 rounded-lg border border-border shadow-sm overflow-hidden" data-testid={`timeline-epic-${epicId}`}>
+      <div className="flex border-b border-border">
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1.5 bg-bg-elevated text-[12px] font-semibold text-text cursor-pointer text-left border-r border-border"
+          style={{ width: LABEL_W }}
+          data-testid={`timeline-epic-toggle-${epicId}`}
+        >
+          {collapsed ? <ChevronRight size={13} className="text-muted shrink-0" /> : <ChevronDown size={13} className="text-muted shrink-0" />}
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${accent.bar}`} />
+          <span className="truncate">{epicTitle}</span>
+          <span className="text-muted font-normal shrink-0">({stories.length})</span>
+        </button>
+        <div className="bg-bg-elevated" style={{ width: scale.totalPx }} />
+      </div>
       {!collapsed && (
-        <div className="relative border border-t-0 border-border rounded-b-md overflow-hidden">
+        <div className="relative">
           <div className="absolute pointer-events-none" style={{ left: LABEL_W, top: 0 }}>
             <DependencyArrows stories={stories} scale={scale} rowIndex={rowIndex} />
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={stories.map(s => s.id)} strategy={verticalListSortingStrategy}>
-              {stories.map((story, i) => (
-                <StoryRow
-                  key={story.id}
-                  story={story}
-                  scale={scale}
-                  phases={phases}
-                  busy={busy}
-                  striped={i % 2 === 1}
-                  onReschedule={(s, d) => onReschedule(story.id, s, d)}
-                  onOpen={() => onOpen(story)}
-                  onRun={() => onRun(story.id)}
-                  onAdvance={mrUrl => onAdvance(story.id, mrUrl)}
-                />
-              ))}
+              <div className="divide-y divide-border">
+                {stories.map((story, i) => (
+                  <StoryRow
+                    key={story.id}
+                    story={story}
+                    scale={scale}
+                    phases={phases}
+                    busy={busy}
+                    striped={i % 2 === 1}
+                    onReschedule={(s, d) => onReschedule(story.id, s, d)}
+                    onOpen={() => onOpen(story)}
+                    onRun={() => onRun(story.id)}
+                    onAdvance={mrUrl => onAdvance(story.id, mrUrl)}
+                  />
+                ))}
+              </div>
             </SortableContext>
           </DndContext>
         </div>
@@ -607,7 +638,15 @@ export default function TimelinePage() {
     onError: (_err, _vars, context) => {
       if (context?.previous) queryClient.setQueryData(['board', 'stories'], context.previous)
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
+    // Also invalidate THIS story's own detail cache, not just the list -
+    // the modal's sidebar reads from ['board','detail', id] separately, and
+    // without this a drag on the timeline left it showing stale dates until
+    // its own poll next happened to fire (same bug class the modal's own
+    // editable fields already dodge, since those invalidate both).
+    onSettled: (_data, _err, { storyId }) => {
+      queryClient.invalidateQueries({ queryKey: ['board', 'stories'] })
+      queryClient.invalidateQueries({ queryKey: ['board', 'detail', storyId] })
+    },
   })
 
   const epics = useMemo(() => {
