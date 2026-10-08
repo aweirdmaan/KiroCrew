@@ -510,9 +510,27 @@ export default function TimelinePage() {
     mutationFn: ({ storyId, mrUrl }: { storyId: string; mrUrl: string }) => boardApi.advance(storyId, mrUrl),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
   })
+  type StoriesData = { stories: BoardStory[]; project_paths: string[] }
   const updateMutation = useMutation({
     mutationFn: ({ storyId, fields }: { storyId: string; fields: Parameters<typeof boardApi.updateStory>[1] }) =>
       boardApi.updateStory(storyId, fields),
+    // Optimistic: a dragged bar/row applying its new position only once the
+    // `bd update` round-trip (and the subsequent refetch) completes reads as
+    // "nothing happened" for however long that takes - `bd` is a real
+    // subprocess call, not instant. Patch the cached list immediately so the
+    // drop sticks right away; onError rolls it back if the write failed.
+    onMutate: async ({ storyId, fields }) => {
+      await queryClient.cancelQueries({ queryKey: ['board', 'stories'] })
+      const previous = queryClient.getQueryData<StoriesData>(['board', 'stories'])
+      queryClient.setQueryData<StoriesData>(['board', 'stories'], old => old && {
+        ...old,
+        stories: old.stories.map(s => (s.id === storyId ? { ...s, ...fields } : s)),
+      })
+      return { previous }
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(['board', 'stories'], context.previous)
+    },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
   })
 
@@ -565,8 +583,8 @@ export default function TimelinePage() {
           ))}
         </div>
       </div>
-      {(phasesQuery.error || storiesQuery.error) && (
-        <ErrorNotice message={String(phasesQuery.error || storiesQuery.error)} />
+      {(phasesQuery.error || storiesQuery.error || updateMutation.error) && (
+        <ErrorNotice message={String(phasesQuery.error || storiesQuery.error || updateMutation.error)} />
       )}
       <div className="flex-1 overflow-auto">
         <div className="sticky top-0 z-20 bg-bg flex">

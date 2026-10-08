@@ -132,6 +132,38 @@ describe('TimelinePage', () => {
     ));
   });
 
+  it('the dropped position sticks right away, before the server write resolves', async () => {
+    // Regression: the old version reset the drag's visual offset to zero on
+    // pointerup and waited for boardApi.updateStory's round trip (a real
+    // `bd` subprocess call, not instant) before the bar reflected its new
+    // date - which read as "nothing happened" for however long that took.
+    // An optimistic cache update should make the new position stick
+    // immediately, independent of when (or whether yet) the write settles.
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ start_date: '2026-10-01', due_date: '2026-10-05' })],
+      project_paths: ['/proj'],
+    });
+    let resolveUpdate: (() => void) | undefined;
+    vi.mocked(boardApi.updateStory).mockReturnValue(
+      new Promise(resolve => { resolveUpdate = () => resolve({ ok: true }); }),
+    );
+
+    renderWithProviders(<TimelinePage />);
+    const bar = await screen.findByTestId('timeline-bar-s-1');
+    const leftBefore = bar.style.left;
+
+    fireEvent.pointerDown(bar, { clientX: 100 });
+    fireEvent(document, new PointerEvent('pointermove', { clientX: 100 + 28 * 3, bubbles: true }));
+    fireEvent(document, new PointerEvent('pointerup', { clientX: 100 + 28 * 3, bubbles: true }));
+
+    // The write is still pending (resolveUpdate hasn't been called), but the
+    // bar should already show its new position.
+    await waitFor(() => expect(screen.getByTestId('timeline-bar-s-1').style.left).not.toBe(leftBefore));
+
+    resolveUpdate?.();
+  });
+
   it('a needs-human story is flagged in its row', async () => {
     vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
     vi.mocked(boardApi.stories).mockResolvedValue({
