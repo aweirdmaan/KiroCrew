@@ -31,7 +31,7 @@ import {
   ShoppingBag,
   Activity,
   FolderPlus,
-  CalendarRange,
+  GanttChart,
 } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { reportSeamCollision } from './seamCollision'
@@ -58,7 +58,7 @@ const BUILTIN_ICON_REGISTRY: Record<string, ReactElement> = {
   ShoppingBag: <ShoppingBag size={16} />,
   Activity: <Activity size={16} />,
   FolderPlus: <FolderPlus size={16} />,
-  CalendarRange: <CalendarRange size={16} />,
+  GanttChart: <GanttChart size={16} />,
 }
 
 /**

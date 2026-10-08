@@ -41,6 +41,24 @@ function story(overrides: Partial<BoardStory> = {}): BoardStory {
 }
 
 describe('TimelinePage', () => {
+  it('shows a loading skeleton until phases and stories both resolve, then shows the real timeline', async () => {
+    let resolveStories: (() => void) | undefined;
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockReturnValue(
+      new Promise(resolve => { resolveStories = () => resolve({ stories: [story()], project_paths: ['/proj'] }); }),
+    );
+
+    renderWithProviders(<TimelinePage />);
+
+    expect(screen.getByTestId('timeline-loading')).toBeInTheDocument();
+    expect(screen.queryByTestId('timeline-header')).toBeNull();
+
+    resolveStories?.();
+
+    await waitFor(() => expect(screen.getByTestId('timeline-header')).toBeInTheDocument());
+    expect(screen.queryByTestId('timeline-loading')).toBeNull();
+  });
+
   it('groups stories by epic and renders a row per story', async () => {
     vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
     vi.mocked(boardApi.stories).mockResolvedValue({
@@ -204,7 +222,7 @@ describe('TimelinePage', () => {
 
     renderWithProviders(<TimelinePage />);
     const row = await screen.findByTestId('timeline-row-s-1');
-    fireEvent.click(row.querySelector('[style*="260"]') ?? row);
+    fireEvent.click(row.firstElementChild as Element);
 
     await waitFor(() => expect(screen.getByTestId('board-timeline-drawer')).toBeInTheDocument());
   });
@@ -238,6 +256,25 @@ describe('TimelinePage', () => {
     fireEvent.click(screen.getByTestId('timeline-advance-confirm-s-1'));
 
     await waitFor(() => expect(boardApi.advance).toHaveBeenCalledWith('s-1', 'https://example.com/mr/9'));
+  });
+
+  it('collapsing an epic hides its rows without losing the other epic', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story(), story({ id: 's-2', epic_id: 'e-2', epic_title: 'Other Epic' })],
+      project_paths: ['/proj'],
+    });
+
+    renderWithProviders(<TimelinePage />);
+    await waitFor(() => expect(screen.getByTestId('timeline-row-s-1')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('timeline-epic-toggle-e-1'));
+
+    expect(screen.queryByTestId('timeline-row-s-1')).toBeNull();
+    expect(screen.getByTestId('timeline-row-s-2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('timeline-epic-toggle-e-1'));
+    expect(screen.getByTestId('timeline-row-s-1')).toBeInTheDocument();
   });
 
   it('toggling zoom switches between week and quarter', async () => {

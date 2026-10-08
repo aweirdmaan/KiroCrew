@@ -24,7 +24,7 @@
       {
         "route": "/board",
         "label": "Timeline",
-        "icon": "CalendarRange"
+        "icon": "GanttChart"
       }
     ]
   },

@@ -26,7 +26,8 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
-  GripVertical, PlayCircle, CheckCircle2, AlertTriangle, Loader2, Check, X, Calendar,
+  GripVertical, PlayCircle, CheckCircle2, AlertTriangle, Loader2, Check, X, CalendarPlus,
+  GanttChart, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -37,16 +38,32 @@ import { i18nT } from '../../i18n/t'
 
 const POLL_MS = 3000
 const DAY_MS = 86_400_000
-const ROW_H = 52
-const LABEL_W = 260
+const ROW_H = 44
+const LABEL_W = 272
 
 type Zoom = 'week' | 'quarter'
-const PX_PER_DAY: Record<Zoom, number> = { week: 28, quarter: 5 }
+const PX_PER_DAY: Record<Zoom, number> = { week: 32, quarter: 6 }
 // How many days the scrollable canvas spans, centered so "today" lands
 // roughly a third of the way in (room to schedule ahead, some history
 // still visible behind it without needing to scroll left immediately).
 const SPAN_DAYS: Record<Zoom, number> = { week: 140, quarter: 540 }
 const LEAD_DAYS: Record<Zoom, number> = { week: 21, quarter: 90 }
+
+// A small fixed palette, picked deterministically per epic so the same
+// epic always gets the same accent (not randomized per render/reload) -
+// purely a visual grouping cue, same idea as Jira's per-epic color chip.
+const EPIC_ACCENTS = [
+  { bar: 'bg-accent', text: 'text-accent' },
+  { bar: 'bg-aim', text: 'text-aim' },
+  { bar: 'bg-ok', text: 'text-ok' },
+  { bar: 'bg-warn', text: 'text-warn' },
+  { bar: 'bg-danger', text: 'text-danger' },
+]
+function epicAccent(epicId: string): { bar: string; text: string } {
+  let h = 0
+  for (let i = 0; i < epicId.length; i++) h = (h * 31 + epicId.charCodeAt(i)) >>> 0
+  return EPIC_ACCENTS[h % EPIC_ACCENTS.length]
+}
 
 function parseDate(s: string | null): Date | null {
   if (!s) return null
@@ -65,13 +82,21 @@ function addDays(d: Date, n: number): Date {
 function startOfDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
+function isWeekend(d: Date): boolean {
+  const day = d.getUTCDay()
+  return day === 0 || day === 6
+}
 
-function statusBadge(story: BoardStory): { variant: 'ok' | 'err' | 'aim' | 'muted'; label: string } | null {
-  const run = story.current_run
-  if (run?.status === 'running') return { variant: 'aim', label: i18nT('apps.board.status_running') }
-  if (run?.status === 'failed') return { variant: 'err', label: i18nT('apps.board.status_failed') }
-  if (run?.status === 'cancelled') return { variant: 'muted', label: i18nT('apps.board.status_cancelled') }
-  return null
+/** The bar's own fill color: a distinct, Jira-like status read at a glance,
+ * independent of the per-epic accent used on the label/header chip. */
+function barColorClass(story: BoardStory, humanReason: unknown): string {
+  if (humanReason) return 'bg-warn'
+  if (story.phase === 'done') return 'bg-ok'
+  const status = story.current_run?.status
+  if (status === 'failed') return 'bg-danger'
+  if (status === 'cancelled') return 'bg-muted'
+  if (status === 'running') return 'bg-aim'
+  return 'bg-accent/70'
 }
 
 interface TimeScale {
@@ -94,6 +119,30 @@ function useTimeScale(zoom: Zoom): TimeScale {
       dateAt: px => addDays(anchor, Math.round(px / pxPerDay)),
     }
   }, [zoom])
+}
+
+/** Shaded weekend columns, the same full height as the body - a cheap,
+ * constant visual rhythm Jira's own timeline uses so a bar's length reads
+ * against the calendar at a glance, not just against a ruler at the top. */
+function WeekendBands({ scale, height }: { scale: TimeScale; height: number | string }) {
+  const bands = useMemo(() => {
+    if (scale.pxPerDay < 10) return [] // too thin to read as a column once zoomed out
+    const out: { x: number }[] = []
+    const days = Math.ceil(scale.totalPx / scale.pxPerDay)
+    for (let i = 0; i <= days; i++) {
+      const d = addDays(scale.anchor, i)
+      if (isWeekend(d)) out.push({ x: i * scale.pxPerDay })
+    }
+    return out
+  }, [scale])
+  if (bands.length === 0) return null
+  return (
+    <div className="absolute inset-0 pointer-events-none" style={{ width: scale.totalPx }}>
+      {bands.map(b => (
+        <div key={b.x} className="absolute top-0 bg-[var(--bg-hover)]/40" style={{ left: b.x, width: scale.pxPerDay, height }} />
+      ))}
+    </div>
+  )
 }
 
 function TimelineHeader({ scale, zoom }: { scale: TimeScale; zoom: Zoom }) {
@@ -121,11 +170,12 @@ function TimelineHeader({ scale, zoom }: { scale: TimeScale; zoom: Zoom }) {
   }, [scale, zoom])
 
   return (
-    <div className="relative h-7 border-b border-border" style={{ width: scale.totalPx }} data-testid="timeline-header">
+    <div className="relative h-8 border-b border-border-strong bg-bg" style={{ width: scale.totalPx }} data-testid="timeline-header">
+      <WeekendBands scale={scale} height="100%" />
       {ticks.map(t => (
         <div
           key={t.x}
-          className={`absolute top-0 h-full border-l ${t.major ? 'border-border-strong' : 'border-border'} pl-1 text-[10px] whitespace-nowrap ${t.major ? 'text-text font-medium' : 'text-muted'}`}
+          className={`absolute top-0 h-full border-l ${t.major ? 'border-border-strong' : 'border-border'} pl-1.5 pt-1.5 text-[10px] whitespace-nowrap ${t.major ? 'text-text font-semibold' : 'text-muted'}`}
           style={{ left: t.x }}
         >
           {t.label}
@@ -135,10 +185,14 @@ function TimelineHeader({ scale, zoom }: { scale: TimeScale; zoom: Zoom }) {
   )
 }
 
-function TodayLine({ scale }: { scale: TimeScale }) {
+function TodayLine({ scale, height }: { scale: TimeScale; height: number | string }) {
   const x = scale.x(startOfDay(new Date()))
   if (x < 0 || x > scale.totalPx) return null
-  return <div className="absolute top-0 bottom-0 w-px bg-accent/60 z-10 pointer-events-none" style={{ left: x }} data-testid="timeline-today-line" />
+  return (
+    <div className="absolute top-0 w-px bg-danger z-10 pointer-events-none" style={{ left: x, height }} data-testid="timeline-today-line">
+      <div className="absolute -top-1 -left-[3px] w-[7px] h-[7px] rounded-full bg-danger" />
+    </div>
+  )
 }
 
 type DragMode = 'move' | 'resize-start' | 'resize-end'
@@ -164,11 +218,11 @@ function StoryBar({
           const today = startOfDay(new Date())
           onReschedule(toDateInputValue(today), toDateInputValue(addDays(today, 3)))
         }}
-        className="absolute top-2 flex items-center gap-1 text-[11px] text-muted hover:text-accent border border-dashed border-border rounded px-2 py-1 cursor-pointer"
+        className="absolute top-2 flex items-center gap-1 text-[11px] text-muted hover:text-accent hover:border-accent border border-dashed border-border rounded-full px-2.5 py-1 cursor-pointer transition-colors"
         style={{ left: scale.x(startOfDay(new Date())) }}
         data-testid={`timeline-schedule-${story.id}`}
       >
-        <Calendar size={11} />
+        <CalendarPlus size={11} />
         {i18nT('apps.board.schedule_story')}
       </button>
     )
@@ -213,13 +267,12 @@ function StoryBar({
   }
 
   const humanReason = needsHuman(story, { key: story.phase ?? '', manual: story.phase === 'review' || story.phase === 'done' }, story.pending_open_questions)
-  const badge = statusBadge(story)
+  const color = barColorClass(story, humanReason)
+  const labelOutside = width < 90
 
   return (
     <div
-      className={`absolute top-1.5 h-9 rounded-md flex items-center px-2 text-[11px] text-accent-fg cursor-grab select-none ${
-        humanReason ? 'bg-warn' : badge?.variant === 'err' ? 'bg-err' : badge?.variant === 'aim' ? 'bg-accent' : 'bg-accent/80'
-      }`}
+      className={`absolute top-1/2 -translate-y-1/2 h-6 rounded-full flex items-center px-2.5 text-[11px] font-medium text-accent-fg cursor-grab select-none shadow-sm hover:brightness-110 transition-[filter] ${color}`}
       style={{ left, width }}
       onPointerDown={beginDrag('move')}
       data-testid={`timeline-bar-${story.id}`}
@@ -230,27 +283,36 @@ function StoryBar({
         onPointerDown={beginDrag('resize-start')}
         data-testid={`timeline-bar-resize-start-${story.id}`}
       />
-      <span className="truncate flex-1">
-        {humanReason && <AlertTriangle size={10} className="inline mr-1 -mt-0.5" />}
-        {story.title}
-      </span>
+      {!labelOutside && (
+        <span className="truncate flex-1">
+          {humanReason && <AlertTriangle size={10} className="inline mr-1 -mt-0.5" />}
+          {story.title}
+        </span>
+      )}
       {story.current_run?.status === 'running' && <Loader2 size={11} className="animate-spin ml-1 shrink-0" />}
       <div
         className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize"
         onPointerDown={beginDrag('resize-end')}
         data-testid={`timeline-bar-resize-end-${story.id}`}
       />
+      {labelOutside && (
+        <span className="absolute left-full ml-2 text-text text-[11px] whitespace-nowrap">
+          {humanReason && <AlertTriangle size={10} className="inline mr-1 -mt-0.5 text-warn" />}
+          {story.title}
+        </span>
+      )}
     </div>
   )
 }
 
 function StoryRow({
-  story, scale, phases, busy, onReschedule, onOpen, onRun, onAdvance,
+  story, scale, phases, busy, striped, onReschedule, onOpen, onRun, onAdvance,
 }: {
   story: BoardStory
   scale: TimeScale
   phases: PhaseDef[]
   busy: boolean
+  striped: boolean
   onReschedule: (startDate: string, dueDate: string) => void
   onOpen: () => void
   onRun: () => void
@@ -269,11 +331,11 @@ function StoryRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition, height: ROW_H, opacity: isDragging ? 0.5 : 1 }}
-      className="flex border-b border-border"
+      className={`flex border-b border-border group ${striped ? 'bg-[var(--bg-hover)]/30' : ''} hover:bg-[var(--bg-hover)]/60 transition-colors`}
       data-testid={`timeline-row-${story.id}`}
     >
       <div
-        className="shrink-0 flex items-center gap-1.5 px-2 border-r border-border bg-bg-elevated cursor-pointer"
+        className="shrink-0 flex items-center gap-1.5 px-2 border-r border-border-strong cursor-pointer"
         style={{ width: LABEL_W }}
         onClick={onOpen}
       >
@@ -282,13 +344,13 @@ function StoryRow({
           {...attributes}
           {...listeners}
           onClick={e => e.stopPropagation()}
-          className="text-muted hover:text-text cursor-grab shrink-0"
+          className="text-muted hover:text-text cursor-grab shrink-0 opacity-40 group-hover:opacity-100 transition-opacity"
           data-testid={`timeline-reorder-${story.id}`}
         >
           <GripVertical size={14} />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="text-[12px] text-text truncate font-medium">{story.title}</div>
+          <div className="text-[12px] text-text truncate font-medium leading-tight">{story.title}</div>
           <div className="flex items-center gap-1 mt-0.5 flex-wrap">
             {humanReason && (
               <Badge variant="warn" className="text-[9px]" data-testid={`timeline-needs-human-${story.id}`}>
@@ -355,7 +417,8 @@ function StoryRow({
         )}
       </div>
       <div className="relative flex-1" style={{ width: scale.totalPx }}>
-        <TodayLine scale={scale} />
+        <WeekendBands scale={scale} height={ROW_H} />
+        <TodayLine scale={scale} height={ROW_H} />
         <StoryBar story={story} scale={scale} onReschedule={onReschedule} onOpen={onOpen} />
       </div>
     </div>
@@ -434,6 +497,8 @@ function EpicSection({
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
   const rowIndex = useMemo(() => new Map(stories.map((s, i) => [s.id, i])), [stories])
+  const [collapsed, setCollapsed] = useState(false)
+  const accent = epicAccent(epicId)
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -446,32 +511,43 @@ function EpicSection({
 
   return (
     <div className="mb-4" data-testid={`timeline-epic-${epicId}`}>
-      <div className="flex items-center gap-2 px-2 py-1.5 bg-bg-elevated border border-border rounded-t-md text-[12px] font-semibold text-text" style={{ width: LABEL_W }}>
-        {epicTitle}
-        <span className="text-muted font-normal">({stories.length})</span>
-      </div>
-      <div className="relative border border-t-0 border-border rounded-b-md overflow-hidden">
-        <div className="absolute pointer-events-none" style={{ left: LABEL_W, top: 0 }}>
-          <DependencyArrows stories={stories} scale={scale} rowIndex={rowIndex} />
+      <button
+        type="button"
+        onClick={() => setCollapsed(c => !c)}
+        className="flex items-center gap-1.5 px-2 py-1.5 bg-bg-elevated border border-border rounded-t-md text-[12px] font-semibold text-text cursor-pointer w-full text-left"
+        style={{ width: LABEL_W }}
+        data-testid={`timeline-epic-toggle-${epicId}`}
+      >
+        {collapsed ? <ChevronRight size={13} className="text-muted shrink-0" /> : <ChevronDown size={13} className="text-muted shrink-0" />}
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${accent.bar}`} />
+        <span className="truncate">{epicTitle}</span>
+        <span className="text-muted font-normal shrink-0">({stories.length})</span>
+      </button>
+      {!collapsed && (
+        <div className="relative border border-t-0 border-border rounded-b-md overflow-hidden">
+          <div className="absolute pointer-events-none" style={{ left: LABEL_W, top: 0 }}>
+            <DependencyArrows stories={stories} scale={scale} rowIndex={rowIndex} />
+          </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={stories.map(s => s.id)} strategy={verticalListSortingStrategy}>
+              {stories.map((story, i) => (
+                <StoryRow
+                  key={story.id}
+                  story={story}
+                  scale={scale}
+                  phases={phases}
+                  busy={busy}
+                  striped={i % 2 === 1}
+                  onReschedule={(s, d) => onReschedule(story.id, s, d)}
+                  onOpen={() => onOpen(story)}
+                  onRun={() => onRun(story.id)}
+                  onAdvance={mrUrl => onAdvance(story.id, mrUrl)}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         </div>
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={stories.map(s => s.id)} strategy={verticalListSortingStrategy}>
-            {stories.map(story => (
-              <StoryRow
-                key={story.id}
-                story={story}
-                scale={scale}
-                phases={phases}
-                busy={busy}
-                onReschedule={(s, d) => onReschedule(story.id, s, d)}
-                onOpen={() => onOpen(story)}
-                onRun={() => onRun(story.id)}
-                onAdvance={mrUrl => onAdvance(story.id, mrUrl)}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
-      </div>
+      )}
     </div>
   );
 }
@@ -487,6 +563,20 @@ export function computeRank(orderedIds: string[], movedId: string, ranksById: Ma
   if (before != null) return before + 1000
   if (after != null) return after - 1000
   return 0
+}
+
+function TimelineSkeleton() {
+  return (
+    <div className="flex-1 flex flex-col gap-3 animate-pulse" data-testid="timeline-loading">
+      {[0, 1, 2].map(i => (
+        <div key={i} className="flex flex-col gap-1.5">
+          <div className="h-5 w-40 rounded bg-bg-elevated" />
+          <div className="h-11 w-full rounded-md bg-bg-elevated" />
+          <div className="h-11 w-full rounded-md bg-bg-elevated" />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function TimelinePage() {
@@ -553,6 +643,7 @@ export default function TimelinePage() {
   }, [storiesQuery.data])
 
   const busy = runMutation.isPending || advanceMutation.isPending || updateMutation.isPending
+  const loading = phasesQuery.isLoading || storiesQuery.isLoading
 
   const handleReorder = (epicStories: BoardStory[], movedId: string, orderedIds: string[]) => {
     const ranksById = new Map(epicStories.map(s => [s.id, s.rank]))
@@ -564,18 +655,21 @@ export default function TimelinePage() {
     <div className="h-full flex flex-col p-4 overflow-hidden">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-text">{i18nT('apps.board.title')}</h1>
+          <h1 className="text-lg font-semibold text-text flex items-center gap-2">
+            <GanttChart size={20} className="text-accent" />
+            {i18nT('apps.board.title')}
+          </h1>
           {storiesQuery.data && storiesQuery.data.project_paths.length === 0 && (
             <div className="text-[13px] text-muted mt-1">{i18nT('apps.board.no_projects_configured')}</div>
           )}
         </div>
-        <div className="flex items-center gap-1" data-testid="timeline-zoom-toggle">
+        <div className="flex items-center gap-0.5 bg-bg-elevated rounded-full p-0.5" data-testid="timeline-zoom-toggle">
           {(['week', 'quarter'] as const).map(z => (
             <button
               key={z}
               type="button"
               onClick={() => setZoom(z)}
-              className={`text-[11px] px-2 py-1 rounded cursor-pointer ${zoom === z ? 'bg-accent text-accent-fg' : 'text-muted hover:text-text bg-bg-elevated'}`}
+              className={`text-[11px] px-3 py-1 rounded-full cursor-pointer transition-colors ${zoom === z ? 'bg-accent text-accent-fg' : 'text-muted hover:text-text'}`}
               data-testid={`timeline-zoom-${z}`}
             >
               {i18nT(z === 'week' ? 'apps.board.zoom_week' : 'apps.board.zoom_quarter')}
@@ -586,36 +680,40 @@ export default function TimelinePage() {
       {(phasesQuery.error || storiesQuery.error || updateMutation.error) && (
         <ErrorNotice message={String(phasesQuery.error || storiesQuery.error || updateMutation.error)} />
       )}
-      <div className="flex-1 overflow-auto">
-        <div className="sticky top-0 z-20 bg-bg flex">
-          <div className="shrink-0" style={{ width: LABEL_W }} />
-          <TimelineHeader scale={scale} zoom={zoom} />
+      {loading ? (
+        <TimelineSkeleton />
+      ) : (
+        <div className="flex-1 overflow-auto">
+          <div className="sticky top-0 z-20 bg-bg flex">
+            <div className="shrink-0 border-r border-border-strong" style={{ width: LABEL_W }} />
+            <TimelineHeader scale={scale} zoom={zoom} />
+          </div>
+          {epics.length === 0 ? (
+            <div className="text-[12px] text-muted px-1 py-4">{i18nT('apps.board.no_stories')}</div>
+          ) : (
+            epics.map(({ epicId, epicTitle, stories }) => (
+              <EpicSection
+                key={epicId}
+                epicId={epicId}
+                epicTitle={epicTitle}
+                stories={stories}
+                scale={scale}
+                phases={phasesQuery.data?.phases ?? []}
+                busy={busy}
+                onReorder={orderedIds => {
+                  const movedId = orderedIds.find((id, i) => stories[i]?.id !== id) ?? orderedIds[0]
+                  handleReorder(stories, movedId, orderedIds)
+                }}
+                onReschedule={(storyId, startDate, dueDate) =>
+                  updateMutation.mutate({ storyId, fields: { start_date: startDate, due_date: dueDate } })}
+                onOpen={setOpenStory}
+                onRun={storyId => runMutation.mutate(storyId)}
+                onAdvance={(storyId, mrUrl) => advanceMutation.mutate({ storyId, mrUrl })}
+              />
+            ))
+          )}
         </div>
-        {epics.length === 0 ? (
-          <div className="text-[12px] text-muted px-1 py-4">{i18nT('apps.board.no_stories')}</div>
-        ) : (
-          epics.map(({ epicId, epicTitle, stories }) => (
-            <EpicSection
-              key={epicId}
-              epicId={epicId}
-              epicTitle={epicTitle}
-              stories={stories}
-              scale={scale}
-              phases={phasesQuery.data?.phases ?? []}
-              busy={busy}
-              onReorder={orderedIds => {
-                const movedId = orderedIds.find((id, i) => stories[i]?.id !== id) ?? orderedIds[0]
-                handleReorder(stories, movedId, orderedIds)
-              }}
-              onReschedule={(storyId, startDate, dueDate) =>
-                updateMutation.mutate({ storyId, fields: { start_date: startDate, due_date: dueDate } })}
-              onOpen={setOpenStory}
-              onRun={storyId => runMutation.mutate(storyId)}
-              onAdvance={(storyId, mrUrl) => advanceMutation.mutate({ storyId, mrUrl })}
-            />
-          ))
-        )}
-      </div>
+      )}
       {openStory && (
         <StoryModal story={openStory} phases={phasesQuery.data?.phases ?? []} onClose={() => setOpenStory(null)} />
       )}
