@@ -28,6 +28,26 @@ async def test_lists_only_task_type_issues_with_a_parent(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_excludes_a_grape_sub_task_parented_to_a_story_not_an_epic(tmp_path):
+    # Regression, caught live: rocket-confirm-plan persists each grape as its
+    # own task-type issue parented to the STORY (see its SKILL.md step 3),
+    # not the epic. Without checking the parent's own issue_type, that grape
+    # was indistinguishable from a real story and showed up as a second,
+    # confusing "epic" of its own on the timeline (its title truncated to
+    # read as a duplicate of the real story above it).
+    rows = [
+        {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
+        {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
+         "parent": "epic-1", "status": "open"},
+        {"id": "epic-1.1.1", "title": "Grape 1: do the thing", "issue_type": "task",
+         "parent": "epic-1.1", "status": "open"},
+    ]
+    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+        summaries = await board_stories.list_stories(str(tmp_path))
+    assert [s.id for s in summaries] == ["epic-1.1"]
+
+
+@pytest.mark.asyncio
 async def test_reads_phase_from_label(tmp_path):
     rows = [
         {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},

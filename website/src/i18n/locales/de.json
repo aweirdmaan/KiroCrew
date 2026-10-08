@@ -5333,11 +5333,11 @@
       "timeline_title": "Zeitleiste",
       "no_history_yet": "Noch keine Historie",
       "manifest": {
-        "display_name": "Board",
-        "description": "Bewegt eine Beads-Story durch eine 9-spaltige Pipeline (Grooming → Planung → Planprüfung → Freigabe → Umsetzung → Verifikation → PR → Review → Fertig), ein crew-rocket-Skill pro Job, mit Live-Log und einer Story-Zeitleiste. Projekte über knowledge.beads_project_paths konfigurieren.",
-        "page_label": "Board",
-        "use_case_1": "Führe eine Beads-Story durch Grooming, Planung, Umsetzung, Verifikation, PR und Review, ohne das Dashboard zu verlassen.",
-        "use_case_2": "Sieh die aktuelle Phase jeder Story auf einem Board und ihre komplette Job-Verlaufshistorie (mit Live-Logs) in einer Zeitleiste."
+        "display_name": "Zeitachse",
+        "description": "Plant Beads-Stories auf einer Jira-ähnlichen Zeitachse, jede mit ihrer eigenen Pipeline aus einem einzigen DAG (ideate bis retro), die überall dort für einen Menschen pausiert, wo ein Gate ihn braucht - OPEN QUESTIONS beantworten, genehmigen oder einen Fehler beheben - und danach korrekt fortgesetzt wird. Projekte werden über knowledge.beads_project_paths konfiguriert.",
+        "page_label": "Zeitachse",
+        "use_case_1": "Beads-Stories auf einer Zeitachse planen und neu anordnen, wochen- oder quartalsweise, ohne das Dashboard zu verlassen.",
+        "use_case_2": "Führe die gesamte Pipeline einer Story - von ideate bis retro - als einen DAG aus und sieh auf einen Blick, welche Stories dich brauchen (eine Antwort, eine Genehmigung, eine Korrektur) und welche einfach nur laufen."
       },
       "description_title": "Beschreibung",
       "no_description": "Keine Beschreibung",

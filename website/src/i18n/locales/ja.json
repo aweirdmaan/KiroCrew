@@ -5243,11 +5243,11 @@
       "timeline_title": "タイムライン",
       "no_history_yet": "履歴はまだありません",
       "manifest": {
-        "display_name": "ボード",
-        "description": "beadsのストーリーを9列のパイプライン（Grooming→計画→計画レビュー→承認→実装→検証→PR→レビュー→完了）で進めます。各ジョブはcrew-rocketの1つのスキルで実行され、ライブログとストーリーごとのタイムラインがあります。knowledge.beads_project_pathsでプロジェクトを設定してください。",
-        "page_label": "ボード",
-        "use_case_1": "ダッシュボードを離れずに、beadsストーリーをgroomingから計画、実装、検証、PR、レビューまで進めます。",
-        "use_case_2": "ボード上で各ストーリーの現在のフェーズを確認し、タイムラインで全ジョブ履歴（ライブログ付き）を確認できます。"
+        "display_name": "タイムライン",
+        "description": "beadsのストーリーをJira風のタイムラインでスケジュールします。各ストーリーは独自の単一DAGパイプライン（ideateからretroまで）を持ち、ゲートが必要な箇所で人間の対応を待って一時停止します - OPEN QUESTIONSへの回答、承認、または不具合の修正 - 対応後は正しく再開されます。プロジェクトはknowledge.beads_project_pathsで設定します。",
+        "page_label": "タイムライン",
+        "use_case_1": "ダッシュボードを離れることなく、週単位または四半期単位でbeadsのストーリーをタイムライン上でスケジュール・並べ替えできます。",
+        "use_case_2": "ストーリー全体のパイプライン（ideateからretroまで）を1つのDAGとして実行し、どのストーリーがあなたを必要としているか（回答、承認、修正）、どれが単に実行中かを一目で確認できます。"
       },
       "description_title": "説明",
       "no_description": "説明なし",

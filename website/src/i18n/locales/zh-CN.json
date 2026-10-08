@@ -5243,11 +5243,11 @@
       "timeline_title": "时间线",
       "no_history_yet": "暂无历史记录",
       "manifest": {
-        "display_name": "看板",
-        "description": "将 beads 故事推进通过 9 列流水线（Grooming → 规划 → 计划评审 → 批准 → 实施 → 验证 → PR → 评审 → 完成）。每个任务均由 crew-rocket 的一个技能执行，并配有实时日志和故事时间线。通过 knowledge.beads_project_paths 配置项目。",
-        "page_label": "看板",
-        "use_case_1": "无需离开仪表盘，即可让 beads 故事依次经过整理、规划、实施、验证、PR 和评审。",
-        "use_case_2": "在看板上查看每个故事的当前阶段，并在时间线中查看其完整的任务运行历史（包含实时日志）。"
+        "display_name": "时间轴",
+        "description": "在 Jira 风格的时间轴上安排 beads 故事，每个故事都有自己的单一 DAG 流水线（从 ideate 到 retro），在需要人工介入的关卡处暂停 - 回答 OPEN QUESTIONS、批准或修复问题 - 人工处理后会正确恢复。项目通过 knowledge.beads_project_paths 配置。",
+        "page_label": "时间轴",
+        "use_case_1": "无需离开仪表盘，即可按周或按季度在时间轴上安排和重新排序 beads 故事。",
+        "use_case_2": "将一个故事的整个流水线（从 ideate 到 retro）作为一个 DAG 运行，一眼就能看出哪些故事需要你（回答、批准、修复），哪些只是在运行中。"
       },
       "description_title": "描述",
       "no_description": "无描述",

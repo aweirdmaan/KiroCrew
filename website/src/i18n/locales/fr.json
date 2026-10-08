@@ -5423,11 +5423,11 @@
       "timeline_title": "Chronologie",
       "no_history_yet": "Aucun historique pour l'instant",
       "manifest": {
-        "display_name": "Tableau",
-        "description": "Fait avancer une story beads à travers un pipeline à 9 colonnes (Grooming → Planification → Revue du plan → Approbation → Implémentation → Vérification → PR → Revue → Terminé), une compétence crew-rocket par tâche, avec un journal en direct et une chronologie par story. Configurez les projets via knowledge.beads_project_paths.",
-        "page_label": "Tableau",
-        "use_case_1": "Faites avancer une story beads à travers le grooming, la planification, l'implémentation, la vérification, la PR et la revue sans quitter le tableau de bord.",
-        "use_case_2": "Voyez la phase actuelle de chaque story sur un tableau, et tout son historique d'exécution (avec journaux en direct) dans une chronologie."
+        "display_name": "Chronologie",
+        "description": "Planifie les stories beads sur une chronologie façon Jira, chacune avec son propre pipeline en un seul DAG (de ideate à retro) qui se met en pause pour un humain partout où une porte en a besoin - répondre aux OPEN QUESTIONS, approuver ou corriger une panne - et reprend correctement une fois son action faite. Les projets se configurent via knowledge.beads_project_paths.",
+        "page_label": "Chronologie",
+        "use_case_1": "Planifiez et réordonnez les stories beads sur une chronologie, par semaine ou par trimestre, sans quitter le tableau de bord.",
+        "use_case_2": "Exécutez tout le pipeline d'une story - de ideate à retro - comme un seul DAG, et voyez d'un coup d'œil quelles stories ont besoin de vous (une réponse, une approbation, une correction) et lesquelles tournent simplement."
       },
       "description_title": "Description",
       "no_description": "Aucune description",

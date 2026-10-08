@@ -70,12 +70,22 @@ async def list_stories(project_path: str) -> list[StorySummary]:
         row.get("id"): row.get("title", "")
         for row in rows if isinstance(row, dict) and row.get("id")
     }
+    epic_ids = {
+        row["id"] for row in rows
+        if isinstance(row, dict) and row.get("issue_type") == "epic" and row.get("id")
+    }
 
     summaries: list[StorySummary] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if row.get("issue_type") != "task" or not row.get("parent"):
+        # A direct child of an EPIC is a story - the timeline's own unit.
+        # confirm_plan persists each grape as its own task-type issue
+        # parented to the STORY, not the epic (see rocket-confirm-plan's
+        # SKILL.md step 3) - those are implementation detail one level
+        # down, already visible in the story's own pipeline DAG, not a
+        # second timeline row of their own.
+        if row.get("issue_type") != "task" or row.get("parent") not in epic_ids:
             continue
         story_id = row["id"]
         labels = row.get("labels") or []

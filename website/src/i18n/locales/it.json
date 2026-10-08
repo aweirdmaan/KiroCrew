@@ -5423,11 +5423,11 @@
       "timeline_title": "Cronologia",
       "no_history_yet": "Ancora nessuna cronologia",
       "manifest": {
-        "display_name": "Bacheca",
-        "description": "Sposta una storia beads attraverso una pipeline a 9 colonne (Grooming → Pianificazione → Revisione piano → Approvazione → Implementazione → Verifica → PR → Revisione → Fatto), una skill crew-rocket per job, con log in tempo reale e una cronologia per storia. Configura i progetti tramite knowledge.beads_project_paths.",
-        "page_label": "Bacheca",
-        "use_case_1": "Esegui una storia beads attraverso grooming, pianificazione, implementazione, verifica, PR e revisione senza lasciare la dashboard.",
-        "use_case_2": "Vedi la fase attuale di ogni storia su una bacheca, e l'intera cronologia dei job (con log in tempo reale) in una timeline."
+        "display_name": "Cronologia",
+        "description": "Pianifica le storie beads su una cronologia in stile Jira, ciascuna con la propria pipeline a DAG unico (da ideate a retro) che si mette in pausa per un umano ovunque serva un gate - rispondere alle OPEN QUESTIONS, approvare o correggere un problema - e riprende correttamente una volta agito. I progetti si configurano tramite knowledge.beads_project_paths.",
+        "page_label": "Cronologia",
+        "use_case_1": "Pianifica e riordina le storie beads su una cronologia, per settimana o per trimestre, senza uscire dalla dashboard.",
+        "use_case_2": "Esegui l'intera pipeline di una storia - da ideate a retro - come un unico DAG, e vedi a colpo d'occhio quali storie hanno bisogno di te (una risposta, un'approvazione, una correzione) e quali stanno semplicemente girando."
       },
       "description_title": "Descrizione",
       "no_description": "Nessuna descrizione",

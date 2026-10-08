@@ -5423,11 +5423,11 @@
       "timeline_title": "Linha do tempo",
       "no_history_yet": "Ainda sem histórico",
       "manifest": {
-        "display_name": "Quadro",
-        "description": "Move uma história beads por um pipeline de 9 colunas (Grooming → Planejamento → Revisão do plano → Aprovação → Implementação → Verificação → PR → Revisão → Concluído), uma skill crew-rocket por job, com log ao vivo e uma linha do tempo por história. Configure os projetos via knowledge.beads_project_paths.",
-        "page_label": "Quadro",
-        "use_case_1": "Execute uma história beads por grooming, planejamento, implementação, verificação, PR e revisão sem sair do painel.",
-        "use_case_2": "Veja a fase atual de cada história em um quadro, e todo o histórico de execução (com logs ao vivo) em uma linha do tempo."
+        "display_name": "Linha do tempo",
+        "description": "Agenda histórias do beads em uma linha do tempo estilo Jira, cada uma com seu próprio pipeline de DAG único (de ideate a retro) que pausa para um humano sempre que um gate precisar - responder às OPEN QUESTIONS, aprovar ou corrigir uma falha - e retoma corretamente depois que a pessoa agir. Os projetos são configurados via knowledge.beads_project_paths.",
+        "page_label": "Linha do tempo",
+        "use_case_1": "Agende e reordene histórias do beads em uma linha do tempo, por semana ou por trimestre, sem sair do painel.",
+        "use_case_2": "Execute o pipeline inteiro de uma história - de ideate a retro - como um único DAG, e veja rapidamente quais histórias precisam de você (uma resposta, uma aprovação, uma correção) e quais estão apenas em execução."
       },
       "description_title": "Descrição",
       "no_description": "Sem descrição",

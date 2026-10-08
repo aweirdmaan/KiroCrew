@@ -5423,11 +5423,11 @@
       "timeline_title": "Cronología",
       "no_history_yet": "Aún no hay historial",
       "manifest": {
-        "display_name": "Tablero",
-        "description": "Mueve una historia de beads a través de una tubería de 9 columnas (Grooming → Planificación → Revisión del plan → Aprobación → Implementación → Verificación → PR → Revisión → Hecho), una habilidad crew-rocket por tarea, con registro en vivo y una línea de tiempo por historia. Configura los proyectos mediante knowledge.beads_project_paths.",
-        "page_label": "Tablero",
-        "use_case_1": "Ejecuta una historia de beads a través de grooming, planificación, implementación, verificación, PR y revisión sin salir del panel.",
-        "use_case_2": "Ve la fase actual de cada historia en un tablero, y todo su historial de ejecuciones (con registros en vivo) en una línea de tiempo."
+        "display_name": "Cronograma",
+        "description": "Programa historias de beads en una línea de tiempo al estilo Jira, cada una con su propio pipeline de un solo DAG (de ideate a retro) que se pausa para un humano donde haga falta una puerta - responder OPEN QUESTIONS, aprobar o arreglar un fallo - y se reanuda correctamente una vez que actúa. Los proyectos se configuran mediante knowledge.beads_project_paths.",
+        "page_label": "Cronograma",
+        "use_case_1": "Programa y reordena historias de beads en una línea de tiempo, por semana o por trimestre, sin salir del panel.",
+        "use_case_2": "Ejecuta todo el pipeline de una historia - de ideate a retro - como un solo DAG, y ve de un vistazo qué historias te necesitan (una respuesta, una aprobación, una corrección) y cuáles simplemente se están ejecutando."
       },
       "description_title": "Descripción",
       "no_description": "Sin descripción",

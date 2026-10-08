@@ -712,6 +712,17 @@ export default function TimelinePage() {
               />
             ))
           )}
+          {/* Continues the calendar grid (weekend shading, today line) into
+             whatever's left of the viewport instead of trailing into a
+             blank void the moment the rows run out - Jira's own timeline
+             does the same, the grid reads as the canvas, not as content. */}
+          <div className="flex h-[480px]">
+            <div className="shrink-0 border-r border-border-strong" style={{ width: LABEL_W }} />
+            <div className="relative flex-1" style={{ width: scale.totalPx }}>
+              <WeekendBands scale={scale} height="100%" />
+              <TodayLine scale={scale} height="100%" />
+            </div>
+          </div>
         </div>
       )}
       {openStory && (
