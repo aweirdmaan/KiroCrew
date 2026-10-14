@@ -5241,6 +5241,8 @@
       "loop_to_implementation": "実装に戻す（クイック修正）",
       "loop_to_planning": "計画に戻す（再計画）",
       "needs_human_recommendation_pending": "選んでください：クイック修正か再計画か",
+      "dag_review_node": "レビュー（人）",
+      "dag_loop_edge_label": "変更が要求された場合",
       "status_running": "実行中",
       "status_needs_attention": "要対応",
       "status_failed": "失敗",

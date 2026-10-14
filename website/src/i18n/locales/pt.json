@@ -5421,6 +5421,8 @@
       "loop_to_implementation": "Voltar à implementação (correção rápida)",
       "loop_to_planning": "Voltar ao planejamento (novo planejamento)",
       "needs_human_recommendation_pending": "Escolha um caminho: correção rápida ou novo planejamento",
+      "dag_review_node": "Revisão (humano)",
+      "dag_loop_edge_label": "se forem solicitadas alterações",
       "status_running": "Em execução",
       "status_needs_attention": "Precisa de atenção",
       "status_failed": "Falhou",

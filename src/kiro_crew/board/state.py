@@ -160,6 +160,23 @@ def gate_passed(gate_line: str | None) -> bool:
 _RECOMMENDATION_PREFIX = "RECOMMENDATION:"
 
 
+def last_recommendation_in_comments(comments: list) -> str | None:
+    """The pure parsing half of last_recommendation_comment, split out so a
+    caller that already fetched a story's comments (e.g. stories.py's
+    list_stories, batching every story's `bd comments` call together rather
+    than issuing a second one per story here) can reuse it without another
+    subprocess round-trip."""
+    last: str | None = None
+    for comment in comments:
+        text = comment.get("text") if isinstance(comment, dict) else None
+        if not isinstance(text, str):
+            continue
+        for line in text.splitlines():
+            if line.startswith(_RECOMMENDATION_PREFIX):
+                last = line
+    return last
+
+
 async def last_recommendation_comment(project_path: str, story_id: str) -> str | None:
     """The last comment line starting with "RECOMMENDATION:" - rocket-harvest's
     own convention (step 5 of its SKILL.md) for proposing, after a reviewer
@@ -172,12 +189,4 @@ async def last_recommendation_comment(project_path: str, story_id: str) -> str |
     comments = await run_bd(project_path, "comments", story_id)
     if not isinstance(comments, list):
         return None
-    last: str | None = None
-    for comment in comments:
-        text = comment.get("text") if isinstance(comment, dict) else None
-        if not isinstance(text, str):
-            continue
-        for line in text.splitlines():
-            if line.startswith(_RECOMMENDATION_PREFIX):
-                last = line
-    return last
+    return last_recommendation_in_comments(comments)

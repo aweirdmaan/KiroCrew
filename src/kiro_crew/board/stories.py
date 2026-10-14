@@ -6,6 +6,7 @@ already reads, reused rather than inventing a second "which projects" list.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from kiro_crew.bd_cli import run_bd
@@ -86,7 +87,8 @@ async def list_stories(project_path: str) -> list[StorySummary]:
         if isinstance(row, dict) and row.get("issue_type") == "epic" and row.get("id")
     }
 
-    summaries: list[StorySummary] = []
+    story_rows: list[dict] = []
+    phase_keys: dict[str, str | None] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -105,6 +107,31 @@ async def list_stories(project_path: str) -> list[StorySummary]:
             if isinstance(label, str) and label.startswith("phase:"):
                 phase_key = label[len("phase:"):]
                 break
+        story_rows.append(row)
+        phase_keys[story_id] = phase_key
+
+    # One `bd comments <id>` subprocess call per story that might need one
+    # (open questions pending in "pipeline", a RECOMMENDATION pending in
+    # "review") - run concurrently rather than one at a time. Each `bd`
+    # invocation is real subprocess + sqlite overhead (measured live:
+    # 0.2-3.7s, not a cheap call), so awaiting them in a sequential loop
+    # multiplied the whole board's load time by however many stories were
+    # in those two phases; gathering them lets the slowest one set the
+    # total instead of their sum.
+    comment_story_ids = [
+        row["id"] for row in story_rows
+        if phase_keys[row["id"]] in _PHASES_WHERE_QUESTIONS_MAY_BE_PENDING
+        or phase_keys[row["id"]] in _PHASES_WHERE_RECOMMENDATION_MAY_BE_PENDING
+    ]
+    comments_by_id: dict[str, object] = {}
+    if comment_story_ids:
+        results = await asyncio.gather(*(run_bd(project_path, "comments", sid) for sid in comment_story_ids))
+        comments_by_id = dict(zip(comment_story_ids, results))
+
+    summaries: list[StorySummary] = []
+    for row in story_rows:
+        story_id = row["id"]
+        phase_key = phase_keys[story_id]
         phase = PHASE_BY_KEY.get(phase_key) if phase_key else None
         # Self-heals a "running" entry orphaned by e.g. a gateway restart
         # mid-run - see reconcile_stale_running's own docstring. Every
@@ -114,12 +141,14 @@ async def list_stories(project_path: str) -> list[StorySummary]:
         history = board_engine.reconcile_stale_running(project_path, story_id)
         pending_open_questions = False
         if phase_key in _PHASES_WHERE_QUESTIONS_MAY_BE_PENDING:
-            comments = await run_bd(project_path, "comments", story_id)
+            comments = comments_by_id.get(story_id)
             if isinstance(comments, list):
                 pending_open_questions = last_comment_has_pending_open_questions(comments)
         recommendation = None
         if phase_key in _PHASES_WHERE_RECOMMENDATION_MAY_BE_PENDING:
-            recommendation = await board_state.last_recommendation_comment(project_path, story_id)
+            comments = comments_by_id.get(story_id)
+            if isinstance(comments, list):
+                recommendation = board_state.last_recommendation_in_comments(comments)
         metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
         depends_on = [
             dep["depends_on_id"] for dep in (row.get("dependencies") or [])

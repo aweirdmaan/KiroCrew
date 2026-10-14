@@ -182,6 +182,32 @@ describe('StoryModal', () => {
     expect(within(content).getByText('confirm')).toBeInTheDocument();
   });
 
+  it('the pipeline job\'s DAG shows the post-review loop-back as branch nodes, not a cycle back into ideate/implement', async () => {
+    // Regression: the pipeline's own task chain is strictly sequential (no
+    // branch), which read as "this DAG can never go back" even though a
+    // human CAN loop a reviewed story back into implement or plan (see
+    // engine.resume_pipeline_at/resume_pipeline_from_start) - that action
+    // just isn't a dependency edge inside this one job. It must render as
+    // extra nodes off a "Review" node, never as a second edge back into the
+    // already-rendered "ideate"/"implement" nodes.
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [run({ phase: 'pipeline', task_key: 'verify', status: 'passed' })],
+    });
+
+    renderWithProviders(<StoryModal story={story({ phase: 'review' })} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+    fireEvent.click(within(job).getByTestId('board-job-pipeline-view-dag'));
+    const content = within(job).getByTestId('board-job-pipeline-view-content');
+
+    await waitFor(() => expect(within(content).getByText('Review (human)')).toBeInTheDocument());
+    expect(within(content).getByText('Loop to Implementation (quick fix)')).toBeInTheDocument();
+    expect(within(content).getByText('Loop to Planning (re-scope)')).toBeInTheDocument();
+  });
+
   it('switching a job to the Phased view lists its tasks with attempt counts', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail());
     vi.mocked(boardApi.history).mockResolvedValue({

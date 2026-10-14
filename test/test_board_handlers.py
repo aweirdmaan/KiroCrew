@@ -39,6 +39,33 @@ class TestGetPhases:
         assert "gate" not in pipeline  # gate/loop are per-task now, not echoed at the phase level
 
 
+class TestFindStoryProject:
+    # Regression: _find_story_project used to call list_stories(project)
+    # per project - which itself fans out a `bd comments` subprocess call
+    # per pipeline/review-phase story - just to resolve one id. Every
+    # handler below calls this on every request, so that made opening a
+    # single story pay for a second full board load. It must now only ever
+    # call `bd show --id <id>`, once per configured project.
+    @pytest.mark.asyncio
+    async def test_checks_each_project_via_bd_show_not_list_stories(self):
+        async def fake_run_bd(project_path, *args):
+            assert args[:2] == ("show", "--id"), f"expected a cheap bd show, got {args}"
+            return [{"id": "s-1"}] if project_path == "/proj-b" else []
+
+        with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj-a", "/proj-b"])), \
+             patch.object(board_handlers, "run_bd", side_effect=fake_run_bd), \
+             patch.object(board_handlers, "list_stories", AsyncMock(side_effect=AssertionError("must not be called"))):
+            found = await board_handlers._find_story_project("s-1")
+        assert found == "/proj-b"
+
+    @pytest.mark.asyncio
+    async def test_no_project_has_the_story_returns_none(self):
+        with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj-a"])), \
+             patch.object(board_handlers, "run_bd", AsyncMock(return_value=[])):
+            found = await board_handlers._find_story_project("s-missing")
+        assert found is None
+
+
 class TestListStories:
     @pytest.mark.asyncio
     async def test_no_configured_projects_returns_empty(self):
@@ -223,12 +250,29 @@ class TestGetStoryHistory:
 
 
 class TestGetStoryDetailRoute:
+    # Deliberately does NOT use _find_story_project - see the route's own
+    # docstring on why (avoids a second redundant `bd show` per request).
+
     @pytest.mark.asyncio
     async def test_returns_detail_for_known_story(self):
         req = _request("GET", "/api/board/stories/s-1/detail", match_info={"id": "s-1"})
         detail = {"id": "s-1", "title": "T", "description": "d", "comments": []}
-        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+        with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj"])), \
              patch.object(board_handlers.board_detail, "get_story_detail", AsyncMock(return_value=detail)):
+            resp = await board_handlers.get_story_detail_route(req)
+        data = await _body(resp)
+        assert data == detail
+
+    @pytest.mark.asyncio
+    async def test_tries_the_next_project_before_giving_up(self):
+        req = _request("GET", "/api/board/stories/s-1/detail", match_info={"id": "s-1"})
+        detail = {"id": "s-1", "title": "T", "description": "d", "comments": []}
+
+        async def fake_get_story_detail(project_path, story_id):
+            return detail if project_path == "/proj-b" else None
+
+        with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj-a", "/proj-b"])), \
+             patch.object(board_handlers.board_detail, "get_story_detail", side_effect=fake_get_story_detail):
             resp = await board_handlers.get_story_detail_route(req)
         data = await _body(resp)
         assert data == detail
@@ -236,17 +280,12 @@ class TestGetStoryDetailRoute:
     @pytest.mark.asyncio
     async def test_unknown_story_is_404(self):
         req = _request("GET", "/api/board/stories/s-1/detail", match_info={"id": "s-1"})
-        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value=None)):
-            resp = await board_handlers.get_story_detail_route(req)
-        assert resp.status == 404
-
-    @pytest.mark.asyncio
-    async def test_bd_failure_is_502(self):
-        req = _request("GET", "/api/board/stories/s-1/detail", match_info={"id": "s-1"})
-        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+        with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj"])), \
              patch.object(board_handlers.board_detail, "get_story_detail", AsyncMock(return_value=None)):
             resp = await board_handlers.get_story_detail_route(req)
-        assert resp.status == 502
+        assert resp.status == 404
+        data = await _body(resp)
+        assert data["code"] == "story_not_found"
 
 
 class TestAddStoryComment:

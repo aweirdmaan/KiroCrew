@@ -5331,6 +5331,8 @@
       "loop_to_implementation": "বাস্তবায়নে ফিরে যান (দ্রুত সমাধান)",
       "loop_to_planning": "পরিকল্পনায় ফিরে যান (পুনঃপরিকল্পনা)",
       "needs_human_recommendation_pending": "একটি পথ বেছে নিন: দ্রুত সমাধান বা পুনঃপরিকল্পনা",
+      "dag_review_node": "পর্যালোচনা (মানব)",
+      "dag_loop_edge_label": "যদি পরিবর্তনের অনুরোধ করা হয়",
       "status_running": "চলছে",
       "status_needs_attention": "মনোযোগ প্রয়োজন",
       "status_failed": "ব্যর্থ",

@@ -5331,6 +5331,8 @@
       "loop_to_implementation": "Zurück zur Implementierung (schnelle Korrektur)",
       "loop_to_planning": "Zurück zur Planung (Neuplanung)",
       "needs_human_recommendation_pending": "Entscheidung nötig: schnelle Korrektur oder Neuplanung",
+      "dag_review_node": "Review (Mensch)",
+      "dag_loop_edge_label": "falls Änderungen verlangt werden",
       "status_running": "Läuft",
       "status_needs_attention": "Braucht Aufmerksamkeit",
       "status_failed": "Fehlgeschlagen",

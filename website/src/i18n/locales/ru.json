@@ -5511,6 +5511,8 @@
       "loop_to_implementation": "Вернуться к реализации (быстрое исправление)",
       "loop_to_planning": "Вернуться к планированию (повторное планирование)",
       "needs_human_recommendation_pending": "Выберите путь: быстрое исправление или повторное планирование",
+      "dag_review_node": "Проверка (человек)",
+      "dag_loop_edge_label": "если запрошены изменения",
       "status_running": "Выполняется",
       "status_needs_attention": "Требует внимания",
       "status_failed": "Ошибка",

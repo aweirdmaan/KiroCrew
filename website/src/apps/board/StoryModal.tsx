@@ -103,8 +103,13 @@ type JobViewMode = 'dag' | 'phased' | 'live'
  * the flat attempt log below for "what actually happened, including every
  * retry" - a looping job like Verification can run `confirm` several times
  * and the structural view only ever shows its LATEST attempt per task. */
-function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
+function JobGroup({ phase, phaseLabel, taskKeys, entries, storyPhase }: {
   phase: string; phaseLabel: string; taskKeys: string[]; entries: RunRecord[]
+  // Only meaningful for the "pipeline" job (see dagNodes/dagEdges below):
+  // the STORY's own current phase, to draw the "Review" branch node with a
+  // status that reflects where this particular story actually is, not just
+  // a static diagram.
+  storyPhase?: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<JobViewMode>('live')
@@ -149,7 +154,32 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries }: {
   const dagNodes = keys.map((key, i) => ({
     id: String(i + 1), title: key, status: toTaskRunnerStatus(latestByKey.get(key)?.status),
   }));
-  const dagEdges = keys.slice(0, -1).map((_, i) => ({ from: String(i + 1), to: String(i + 2) }));
+  const dagEdges: { from: string; to: string; style?: 'loop'; label?: string }[] =
+    keys.slice(0, -1).map((_, i) => ({ from: String(i + 1), to: String(i + 2) }));
+
+  // The "pipeline" job's own task list is strictly sequential (see
+  // phases.py's module docstring) - it has no branch, so this DAG would
+  // otherwise read as a closed loop with no way back, which is exactly
+  // what a reviewer asking for changes should NOT be. The actual loop-back
+  // (engine.resume_pipeline_at / resume_pipeline_from_start) is triggered
+  // from the Review phase, a SEPARATE job with no tasks of its own, not a
+  // dependency edge inside this one - so it is drawn here as two virtual
+  // branch nodes off a "Review" node, not as a real edge back into the
+  // already-laid-out implement/ideate nodes (seeDagView's own note on why
+  // that would create a real cycle).
+  if (phase === 'pipeline' && keys.length > 0) {
+    const reviewStatus = storyPhase === 'done' ? 'passed' : storyPhase === 'review' ? 'in_progress' : 'pending'
+    dagNodes.push(
+      { id: 'review', title: i18nT('apps.board.dag_review_node'), status: reviewStatus },
+      { id: 'loop-implement', title: i18nT('apps.board.loop_to_implementation'), status: 'pending' },
+      { id: 'loop-plan', title: i18nT('apps.board.loop_to_planning'), status: 'pending' },
+    );
+    dagEdges.push(
+      { from: String(keys.length), to: 'review' },
+      { from: 'review', to: 'loop-implement', style: 'loop', label: i18nT('apps.board.dag_loop_edge_label') },
+      { from: 'review', to: 'loop-plan', style: 'loop', label: i18nT('apps.board.dag_loop_edge_label') },
+    );
+  }
 
   const phasedTasks: TaskDetail[] = keys.map((key, i) => ({
     index: i + 1, title: key, description: '',
@@ -764,6 +794,7 @@ export default function StoryModal({ story, phases, onClose }: {
                     phaseLabel={phases.find(p => p.key === phase)?.label ?? phase}
                     taskKeys={phases.find(p => p.key === phase)?.tasks ?? []}
                     entries={entries}
+                    storyPhase={story.phase}
                   />
                 ))
               )}

@@ -13,6 +13,7 @@ import logging
 
 from aiohttp import web
 
+from kiro_crew.bd_cli import run_bd
 from kiro_crew.board import detail as board_detail
 from kiro_crew.board import engine as board_engine
 from kiro_crew.board import state as board_state
@@ -31,14 +32,26 @@ async def _project_paths() -> list[str]:
 
 
 async def _find_story_project(story_id: str) -> str | None:
-    """Which configured project path this story id belongs to. Scans every
-    configured project's listing - fine at the scale this config is meant
-    for (a handful of projects), and avoids a second "story -> project"
-    index to keep in sync."""
-    for project_path in await _project_paths():
-        for story in await list_stories(project_path):
-            if story.id == story_id:
-                return project_path
+    """Which configured project path this story id belongs to - one cheap
+    `bd show --id <id>` per configured project (run concurrently), checking
+    which project's beads database actually has this id.
+
+    Deliberately NOT `list_stories(project_path)` per project: that renders
+    the WHOLE story list, including a `bd comments` subprocess call per
+    pipeline/review-phase story (see its own module comment on why those are
+    real, not-cheap calls) - and every handler below calls this on every
+    single request (open a story, run a job, advance, comment, update...).
+    Re-running that full scan just to resolve one id made every click on
+    the board pay for a second full board load; this only asks each
+    project's `bd` "do you have this id" once.
+    """
+    async def _has_story(project_path: str) -> str | None:
+        result = await run_bd(project_path, "show", "--id", story_id)
+        return project_path if isinstance(result, list) and result else None
+
+    for found in await asyncio.gather(*(_has_story(p) for p in await _project_paths())):
+        if found is not None:
+            return found
     return None
 
 
@@ -65,9 +78,13 @@ async def list_board_stories(request: web.Request) -> web.Response:
     project_paths = await _project_paths()
     if not project_paths:
         return web.json_response({"stories": [], "project_paths": []})
+    # Each project's own list_stories() already parallelizes its per-story
+    # `bd comments` calls internally - this gathers across PROJECTS too, so
+    # project 2's board doesn't wait for project 1's to finish first.
+    per_project = await asyncio.gather(*(list_stories(p) for p in project_paths))
     all_stories = []
-    for project_path in project_paths:
-        for story in await list_stories(project_path):
+    for stories in per_project:
+        for story in stories:
             all_stories.append({
                 "id": story.id, "title": story.title, "status": story.status,
                 "epic_id": story.epic_id, "epic_title": story.epic_title,
@@ -197,15 +214,21 @@ async def get_story_history(request: web.Request) -> web.Response:
 
 async def get_story_detail_route(request: web.Request) -> web.Response:
     """GET /api/board/stories/{id}/detail — full beads attributes: description,
-    status, priority, owner, comments. The Jira-style modal's main content."""
+    status, priority, owner, comments. The Jira-style modal's main content.
+
+    Deliberately not `_find_story_project` + `get_story_detail`: both call
+    `bd show --id` under the hood, so doing them in sequence paid for the
+    same subprocess call twice on the single hottest path in the UI (opening
+    a story). `get_story_detail`'s own `bd show` already tells us whether
+    the id exists in that project, so this tries each configured project
+    directly and keeps the first real result - one `bd show` per candidate
+    project, not two."""
     story_id = request.match_info["id"]
-    project_path = await _find_story_project(story_id)
-    if project_path is None:
-        return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
-    detail = await board_detail.get_story_detail(project_path, story_id)
-    if detail is None:
-        return web.json_response({"error": "bd show failed", "code": "bd_unavailable"}, status=502)
-    return web.json_response(detail)
+    for project_path in await _project_paths():
+        detail = await board_detail.get_story_detail(project_path, story_id)
+        if detail is not None:
+            return web.json_response(detail)
+    return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
 
 
 async def add_story_comment(request: web.Request) -> web.Response:

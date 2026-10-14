@@ -1468,6 +1468,8 @@
       "loop_to_implementation": "Loop to Implementation (quick fix)",
       "loop_to_planning": "Loop to Planning (re-scope)",
       "needs_human_recommendation_pending": "Pick a path: quick fix or re-plan",
+      "dag_review_node": "Review (human)",
+      "dag_loop_edge_label": "if changes requested",
       "status_running": "Running",
       "status_needs_attention": "Needs attention",
       "status_failed": "Failed",

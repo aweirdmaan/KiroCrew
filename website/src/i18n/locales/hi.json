@@ -5331,6 +5331,8 @@
       "loop_to_implementation": "कार्यान्वयन पर वापस जाएँ (त्वरित सुधार)",
       "loop_to_planning": "योजना पर वापस जाएँ (पुनः योजना)",
       "needs_human_recommendation_pending": "एक रास्ता चुनें: त्वरित सुधार या पुनः योजना",
+      "dag_review_node": "समीक्षा (मानव)",
+      "dag_loop_edge_label": "यदि बदलाव का अनुरोध किया गया हो",
       "status_running": "चल रहा है",
       "status_needs_attention": "ध्यान देने की आवश्यकता",
       "status_failed": "विफल",

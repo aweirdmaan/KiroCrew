@@ -5241,6 +5241,8 @@
       "loop_to_implementation": "回到实现（快速修复）",
       "loop_to_planning": "回到规划（重新规划）",
       "needs_human_recommendation_pending": "请选择：快速修复还是重新规划",
+      "dag_review_node": "评审（人工）",
+      "dag_loop_edge_label": "如果请求了更改",
       "status_running": "运行中",
       "status_needs_attention": "需要关注",
       "status_failed": "失败",

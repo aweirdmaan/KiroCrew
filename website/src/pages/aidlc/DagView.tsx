@@ -3,7 +3,16 @@ import { Wrench, Shield, Hourglass, Pause, SkipForward, Square, Check, X, Lock }
 
 import { i18nT } from '../../i18n/t'
 interface DagNode { id: string; title: string; status: string; task_type?: string; requires_approval?: boolean }
-interface DagEdge { from: string; to: string }
+// `style: 'loop'` + `label` are for a board story's post-review loop-back
+// (see apps/board/StoryModal.tsx): drawn as a distinct dashed/amber path
+// with its own caption, NOT a real dependency edge back into an
+// already-laid-out node - that would create a genuine cycle and break the
+// Kahn's-algorithm layering below (a node fed only by a "later" node would
+// never reach indegree 0 and silently vanish from the graph). Every
+// `style: 'loop'` edge in practice points at its own virtual leaf node, not
+// at an upstream one, so the DAG stays acyclic even while depicting "and
+// then, optionally, back to X".
+interface DagEdge { from: string; to: string; style?: 'loop'; label?: string }
 
 const STATUS_FILL: Record<string, string> = {
   pending: 'var(--muted)', in_progress: 'var(--accent)', reviewing: 'var(--accent)', passed: 'var(--ok)', failed: 'var(--danger)', skipped: 'var(--muted)', cancelled: 'var(--muted)', cancelling: 'var(--accent)', paused: 'var(--info)', pausing: 'var(--accent)', blocked: 'var(--warn)', gated: 'var(--muted)',
@@ -138,8 +147,19 @@ export default function DagView({ nodes, edges, onNodeClick, selectedId, pending
           const cy1 = y1 + (y2 - y1) * 0.4, cy2 = y1 + (y2 - y1) * 0.6
           const d = `M${x1},${y1} C${x1},${cy1} ${x2},${cy2} ${x2},${y2}`
           const toActive = to.status === 'in_progress' || to.status === 'reviewing'
+          const isLoop = e.style === 'loop'
           return <g key={i}>
-            <path d={d} fill="none" stroke={STATUS_FILL[from.status] || 'var(--muted)'} strokeWidth={1.5} strokeDasharray="4 3" markerEnd="url(#arrow)" opacity={0.5} />
+            <path
+              d={d} fill="none"
+              stroke={isLoop ? 'var(--warn)' : (STATUS_FILL[from.status] || 'var(--muted)')}
+              strokeWidth={1.5} strokeDasharray={isLoop ? '2 3' : '4 3'}
+              markerEnd="url(#arrow)" opacity={isLoop ? 0.65 : 0.5}
+            />
+            {isLoop && e.label && (
+              <text x={(x1 + x2) / 2 + 6} y={(y1 + y2) / 2} fontSize={9} fill="var(--warn)" fontWeight={600}>
+                {e.label}
+              </text>
+            )}
             {toActive && <>
               <circle r={3} fill="var(--accent)"><animateMotion dur="1.5s" repeatCount="indefinite" path={d}/></circle>
               <circle r={3} fill="var(--accent)" opacity={0.4}><animateMotion dur="1.5s" begin="0.5s" repeatCount="indefinite" path={d}/></circle>
