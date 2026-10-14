@@ -62,6 +62,21 @@ class Task:
     # up to loop_cap attempts, then stop and leave it for a human.
     loop: str | None = None
     loop_cap: int = 1
+    # Only meaningful on a gated task (gate=True): on GATE: FAIL, instead of
+    # stopping the phase, resubmit starting from the task with THIS key -
+    # same iteration-cap contract as `loop` above, just counting a cycle
+    # through several tasks instead of retries of one. This is what makes
+    # confirm -> verify a real loop (see its own Task below) rather than
+    # a single pass that needs a full pipeline restart on every finding
+    # confirm still isn't happy with - matching what rocket-verify/
+    # rocket-fix/rocket-confirm's own SKILL.md files actually describe:
+    # verify posts FINDINGS, fix addresses them, confirm checks fix's work
+    # and re-runs gates - if confirm still finds something broken, the
+    # right next step is fresh FINDINGS from verify, not a re-run of
+    # implement (whose own job - per its SKILL.md - is unrelated: work the
+    # task list until ALL_TASKS_COMPLETE, nothing to do with verify's
+    # findings).
+    loop_back_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,7 +112,13 @@ PHASES: tuple[Phase, ...] = (
                  loop="until_all_tasks_complete", loop_cap=25),
             Task(key="verify", skill="rocket-verify", agent="jessie"),
             Task(key="fix", skill="rocket-fix", agent="james"),
-            Task(key="confirm", skill="rocket-confirm", agent="jessie", gate=True),
+            # Up to 5 verify->fix->confirm cycles before this needs a
+            # human - rocket-fix's own SKILL.md already handles a clean
+            # NONE findings post as a no-op ("nothing to fix"), so a cycle
+            # that's actually converging costs nothing extra once findings
+            # stop recurring; this cap only bites a genuinely stuck loop.
+            Task(key="confirm", skill="rocket-confirm", agent="jessie", gate=True,
+                 loop_back_to="verify", loop_cap=5),
             Task(key="pr", skill="rocket-pr", agent="james"),
             Task(key="retro", skill="rocket-retro", agent="meowth"),
         ),

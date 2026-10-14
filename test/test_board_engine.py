@@ -408,24 +408,102 @@ class TestImplementationPhase:
         assert "rocket-fix" in tr.submissions[-1]["content"]
         assert beads.labels["s-1"] == {"phase:pipeline"}
 
-    @pytest.mark.asyncio
-    async def test_confirm_gate_fail_stops_before_pr(self, tmp_path, beads):
-        tr = FakeTaskRunner()
-        verify_id = await self._reach_verify(tr, beads, tmp_path)
+    async def _confirm_fails_once(self, tr: FakeTaskRunner, beads: FakeBeads) -> None:
+        """Drives one verify -> fix -> confirm round where confirm's gate
+        fails. Returns with the loop-back's next submission (verify, a new
+        cycle) already in flight, awaited."""
+        verify_id = tr.last_task_id
         tr.set_result(verify_id, "passed", "found issues")
         await _await_inflight("s-1")
         fix_id = tr.last_task_id
         tr.set_result(fix_id, "passed", "fixed")
         await _await_inflight("s-1")
         confirm_id = tr.last_task_id
-        assert "rocket-confirm" in tr.submissions[-1]["content"]
-
         beads.gate("s-1", "FAIL", "still broken")
         tr.set_result(confirm_id, "passed", "not quite")
         await _await_inflight("s-1")
-        assert beads.labels["s-1"] == {"phase:pipeline"}  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_confirm_gate_fail_loops_back_to_verify_not_a_full_stop(self, tmp_path, beads):
+        # Regression: this used to be a dead end - one confirm gate failure
+        # stopped the whole phase, needing a full pipeline restart (back to
+        # ideate) just to get a second look at the same findings. Now it
+        # goes straight back to verify for fresh FINDINGS, same as
+        # rocket-verify/rocket-fix/rocket-confirm's own SKILL.md files
+        # describe a human doing by hand.
+        tr = FakeTaskRunner()
+        await self._reach_verify(tr, beads, tmp_path)
+        await self._confirm_fails_once(tr, beads)
+
+        data = board_state.load_history(str(tmp_path), "s-1")
+        # The failed confirm attempt is recorded honestly...
+        assert data["history"][-1]["status"] == "gate_failed"
+        # ...but automatically followed by a fresh verify, still mid-phase.
+        assert beads.labels["s-1"] == {"phase:pipeline"}
+        assert "rocket-verify" in tr.submissions[-1]["content"]
+        assert data["current_run"]["task_key"] == "verify"
+        assert data["current_run"]["iteration"] == 1
+
+    @pytest.mark.asyncio
+    async def test_loop_cycle_iteration_propagates_through_verify_fix_confirm(self, tmp_path, beads):
+        # So the timeline's attempt pills read "cycle 2" consistently across
+        # all three tasks, not "attempt 1" for fix/confirm's fresh-looking
+        # (but actually second-cycle) runs.
+        tr = FakeTaskRunner()
+        await self._reach_verify(tr, beads, tmp_path)
+        await self._confirm_fails_once(tr, beads)
+        verify_id_2 = tr.last_task_id
+
+        tr.set_result(verify_id_2, "passed", "same issue, plus one more")
+        await _await_inflight("s-1")
+        data = board_state.load_history(str(tmp_path), "s-1")
+        assert data["current_run"]["task_key"] == "fix"
+        assert data["current_run"]["iteration"] == 1
+
+        fix_id_2 = tr.last_task_id
+        tr.set_result(fix_id_2, "passed", "fixed the rest")
+        await _await_inflight("s-1")
+        data = board_state.load_history(str(tmp_path), "s-1")
+        assert data["current_run"]["task_key"] == "confirm"
+        assert data["current_run"]["iteration"] == 1
+
+    @pytest.mark.asyncio
+    async def test_confirm_gate_pass_after_a_loop_cycle_still_chains_to_pr(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        await self._reach_verify(tr, beads, tmp_path)
+        await self._confirm_fails_once(tr, beads)
+        verify_id_2 = tr.last_task_id
+
+        tr.set_result(verify_id_2, "passed", "NONE")
+        await _await_inflight("s-1")
+        fix_id_2 = tr.last_task_id
+        tr.set_result(fix_id_2, "passed", "nothing to fix")
+        await _await_inflight("s-1")
+        confirm_id_2 = tr.last_task_id
+
+        beads.gate("s-1", "PASS", "clean now")
+        tr.set_result(confirm_id_2, "passed", "all clear")
+        await _await_inflight("s-1")
+        assert "rocket-pr" in tr.submissions[-1]["content"]
+        data = board_state.load_history(str(tmp_path), "s-1")
+        # Leaving the loop group resets the iteration - pr only ever runs
+        # once, it must not inherit the cycle count and read as "attempt 2".
+        assert data["current_run"]["task_key"] == "pr"
+        assert data["current_run"]["iteration"] == 0
+
+    @pytest.mark.asyncio
+    async def test_loop_cap_exhausted_stops_for_a_human(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        await self._reach_verify(tr, beads, tmp_path)
+        with _patched_cap("confirm", 2):
+            await self._confirm_fails_once(tr, beads)  # cycle 1 -> loops back
+            before = len(tr.submissions)
+            await self._confirm_fails_once(tr, beads)  # cycle 2 -> cap hit, stops
+        assert len(tr.submissions) == before + 2  # verify, fix - no further auto-resubmit
+        assert beads.labels["s-1"] == {"phase:pipeline"}  # unchanged, needs a human
         data = board_state.load_history(str(tmp_path), "s-1")
         assert data["history"][-1]["status"] == "gate_failed"
+        assert data["current_run"] is None
 
     @pytest.mark.asyncio
     async def test_confirm_gate_pass_chains_to_pr_then_retro_then_advances_to_review(self, tmp_path, beads):

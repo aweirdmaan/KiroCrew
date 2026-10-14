@@ -16,6 +16,13 @@ from task 0." That matches ``rocket-dag.sh``'s own unattended chain exactly,
 and is only correct because every gated skill in the chain (confirm-plan
 explicitly, approval-check and confirm effectively) is written to be safe
 to re-invoke.
+
+One exception, entirely internal to ``_reconcile`` below and never
+triggered by a human click: ``confirm``'s gate failing resubmits ``verify``
+directly (``Task.loop_back_to``, phases.py), not the whole phase - a real
+verify -> fix -> confirm cycle, capped, rather than a single pass that falls
+all the way back to a full pipeline restart on every finding confirm still
+isn't happy with.
 """
 
 from __future__ import annotations
@@ -42,6 +49,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL_S = 2.0
+
+# The one task group today that actually cycles (confirm's loop_back_to
+# verify - see phases.py). Used only to decide whether to carry a run's
+# iteration number forward across a task boundary (see _reconcile's forward-
+# advance branch) - not a general "which tasks loop" registry, so it's fine
+# as a hardcoded set tied to today's one gate-loop rather than derived from
+# phases.py, which has no other use for grouping tasks this way.
+_LOOP_GROUP = {"verify", "fix", "confirm"}
 
 # story_id -> background reconcile task, process-lifetime. Prevents a
 # double-click (or a second browser tab) from submitting a second Task
@@ -234,12 +249,33 @@ async def _reconcile(
     if task.gate:
         gate_line = await board_state.last_gate_comment(project_path, story_id)
         if not board_state.gate_passed(gate_line):
-            # Gate failed: stop right here, same as rocket-dag.sh's own
-            # `gate()` check after confirm-plan/approval-check/confirm. A
-            # human acts (answers questions, approves, fixes the break) and
-            # clicks "Run next job" again, which restarts this phase from
-            # its first task - see the module docstring on why that's
-            # correct, not wasteful.
+            if task.loop_back_to is not None and iteration + 1 < task.loop_cap:
+                # A narrower, faster recovery than the full-restart below:
+                # confirm found something still broken - go get fresh
+                # FINDINGS from verify rather than re-running the whole
+                # pipeline from ideate. iteration here is shared across the
+                # verify->fix->confirm cycle (see the iteration-propagation
+                # comment below), so this correctly counts CYCLES, not
+                # retries of confirm itself.
+                _finish("gate_failed")
+                loop_task = next((t for t in phase.tasks if t.key == task.loop_back_to), None)
+                if loop_task is None:
+                    logger.warning(
+                        "board: task %r's loop_back_to %r does not exist in phase %r",
+                        task.key, task.loop_back_to, phase_key,
+                    )
+                    data["current_run"] = None
+                    board_state.save_history(project_path, story_id, data)
+                    return
+                await _resubmit(task_runner, project_path, story_id, phase, loop_task.key, iteration + 1, data)
+                return
+            # Gate failed and there's nowhere left to loop (no loop_back_to,
+            # or its cycle cap is exhausted): stop right here, same as
+            # rocket-dag.sh's own `gate()` check after confirm-plan/
+            # approval-check/confirm. A human acts (answers questions,
+            # approves, fixes the break) and clicks "Run next job" again,
+            # which restarts this phase from its first task - see the
+            # module docstring on why that's correct, not wasteful.
             _finish("gate_failed")
             data["current_run"] = None
             board_state.save_history(project_path, story_id, data)
@@ -249,7 +285,18 @@ async def _reconcile(
     task_idx = next(i for i, t in enumerate(phase.tasks) if t.key == task_key)
     if task_idx + 1 < len(phase.tasks):
         next_task = phase.tasks[task_idx + 1]
-        await _resubmit(task_runner, project_path, story_id, phase, next_task.key, 0, data)
+        # Propagate the cycle's iteration number forward only while moving
+        # from one loop-group task to the next (verify -> fix -> confirm) -
+        # that is what makes a repeat cycle (after a gate_failed loop-back
+        # above bumped iteration) show as attempt 2, 3, ... in the
+        # timeline's own attempt pills, instead of every re-run of verify/
+        # fix looking like a fresh, unrelated "attempt 1". Entering the
+        # group fresh from a task that was never part of it (implement),
+        # or leaving it (confirm -> pr), always starts the next task at 0 -
+        # unaffected by whatever iteration count implement's own,
+        # unrelated self-loop happened to end on.
+        next_iteration = iteration if (task_key in _LOOP_GROUP and next_task.key in _LOOP_GROUP) else 0
+        await _resubmit(task_runner, project_path, story_id, phase, next_task.key, next_iteration, data)
     else:
         await _advance_phase(project_path, story_id, phase_key, data, now)
 
