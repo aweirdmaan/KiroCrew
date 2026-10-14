@@ -1,5 +1,7 @@
 """Tests for kiro_crew.board.autorun: which stories get picked up without
-a human clicking "Run next job", and which are correctly left alone.
+a human clicking "Run next job", which engine entrypoint they're routed
+through, and the concurrency cap that keeps an unattended tick from
+starting every eligible story at once.
 """
 
 from __future__ import annotations
@@ -25,36 +27,42 @@ def _story(**overrides) -> StorySummary:
     return StorySummary(**base)
 
 
-class TestShouldAutorun:
+class TestAutorunAction:
     @pytest.mark.asyncio
-    async def test_backlog_story_is_always_eligible(self, tmp_path):
+    async def test_backlog_story_starts_via_run_job(self, tmp_path):
         story = _story(phase=None, phase_label="Backlog")
-        assert await board_autorun._should_autorun(str(tmp_path), story) is True
+        assert await board_autorun._autorun_action(str(tmp_path), story) == "run_job"
 
     @pytest.mark.asyncio
     async def test_manual_phase_is_never_eligible(self, tmp_path):
         for phase in ("review", "done"):
             story = _story(phase=phase, phase_label=phase.title())
-            assert await board_autorun._should_autorun(str(tmp_path), story) is False
+            assert await board_autorun._autorun_action(str(tmp_path), story) is None
 
     @pytest.mark.asyncio
     async def test_already_running_is_not_eligible(self, tmp_path):
         story = _story(current_run={"status": "running"})
-        assert await board_autorun._should_autorun(str(tmp_path), story) is False
+        assert await board_autorun._autorun_action(str(tmp_path), story) is None
 
     @pytest.mark.asyncio
-    async def test_labeled_but_never_run_is_eligible(self, tmp_path):
+    async def test_labeled_but_never_run_starts_via_run_job(self, tmp_path):
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {"current_run": None, "history": []})
-        assert await board_autorun._should_autorun(str(tmp_path), story) is True
+        assert await board_autorun._autorun_action(str(tmp_path), story) == "run_job"
 
     @pytest.mark.asyncio
-    async def test_missing_status_self_heals_immediately(self, tmp_path):
+    async def test_missing_status_self_heals_via_resume_last_task_not_a_full_restart(self, tmp_path):
+        # Regression: this used to route through run_job, which always
+        # restarts at ideate - wastefully re-running every earlier task's
+        # own real agent turn just to recover one task that merely vanished
+        # from Task Runner's own bookkeeping (confirmed live: a story whose
+        # only problem was a missing "implement" got ideate/plan/
+        # confirm_plan/approval_check all re-invoked for nothing).
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {
             "current_run": None, "history": [{"status": "missing"}],
         })
-        assert await board_autorun._should_autorun(str(tmp_path), story) is True
+        assert await board_autorun._autorun_action(str(tmp_path), story) == "resume_last_task"
 
     @pytest.mark.asyncio
     async def test_cancelled_is_never_auto_resumed(self, tmp_path):
@@ -64,7 +72,7 @@ class TestShouldAutorun:
         board_state.save_history(str(tmp_path), story.id, {
             "current_run": None, "history": [{"status": "cancelled"}],
         })
-        assert await board_autorun._should_autorun(str(tmp_path), story) is False
+        assert await board_autorun._autorun_action(str(tmp_path), story) is None
 
     @pytest.mark.asyncio
     async def test_gate_failed_waits_for_a_new_comment_first_tick(self, tmp_path):
@@ -76,13 +84,13 @@ class TestShouldAutorun:
             "current_run": None, "history": [{"status": "gate_failed"}],
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[{"text": "GATE: FAIL still broken"}])):
-            result = await board_autorun._should_autorun(str(tmp_path), story)
-        assert result is False
+            result = await board_autorun._autorun_action(str(tmp_path), story)
+        assert result is None
         data = board_state.load_history(str(tmp_path), story.id)
         assert data["autorun_seen_comment_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_gate_failed_retries_once_a_new_comment_appears(self, tmp_path):
+    async def test_gate_failed_retries_via_run_job_once_a_new_comment_appears(self, tmp_path):
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {
             "current_run": None, "history": [{"status": "gate_failed"}],
@@ -91,8 +99,8 @@ class TestShouldAutorun:
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[
             {"text": "GATE: FAIL still broken"}, {"text": "fixed it, try again"},
         ])):
-            result = await board_autorun._should_autorun(str(tmp_path), story)
-        assert result is True
+            result = await board_autorun._autorun_action(str(tmp_path), story)
+        assert result == "run_job"
         data = board_state.load_history(str(tmp_path), story.id)
         assert data["autorun_seen_comment_count"] == 2
 
@@ -104,8 +112,8 @@ class TestShouldAutorun:
             "autorun_seen_comment_count": 1,
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[{"text": "GATE: FAIL still broken"}])):
-            result = await board_autorun._should_autorun(str(tmp_path), story)
-        assert result is False
+            result = await board_autorun._autorun_action(str(tmp_path), story)
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_plain_failed_status_follows_the_same_comment_rule_as_gate_failed(self, tmp_path):
@@ -115,8 +123,8 @@ class TestShouldAutorun:
             "autorun_seen_comment_count": 0,
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[{"text": "a human left a note"}])):
-            result = await board_autorun._should_autorun(str(tmp_path), story)
-        assert result is True
+            result = await board_autorun._autorun_action(str(tmp_path), story)
+        assert result == "run_job"
 
 
 class TestAutorunTick:
@@ -131,6 +139,51 @@ class TestAutorunTick:
             await board_autorun.autorun_tick(task_runner=object(), project_paths=[str(tmp_path)])
 
         mocked_run.assert_called_once_with(mocked_run.call_args[0][0], str(tmp_path), "s-eligible")
+
+    @pytest.mark.asyncio
+    async def test_missing_status_calls_resume_last_task_not_run_job(self, tmp_path):
+        story = _story(id="s-missing")
+        board_state.save_history(str(tmp_path), story.id, {
+            "current_run": None, "history": [{"status": "missing"}],
+        })
+
+        with patch.object(board_autorun, "list_stories", AsyncMock(return_value=[story])), \
+             patch.object(board_engine, "run_job", AsyncMock()) as mocked_run_job, \
+             patch.object(board_engine, "resume_last_task", AsyncMock(return_value="task-1")) as mocked_resume:
+            await board_autorun.autorun_tick(task_runner=object(), project_paths=[str(tmp_path)])
+
+        mocked_resume.assert_called_once_with(mocked_resume.call_args[0][0], str(tmp_path), "s-missing")
+        mocked_run_job.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_concurrency_cap_leaves_extra_eligible_stories_for_a_later_tick(self, tmp_path):
+        # Regression: an unattended tick used to start EVERY eligible story
+        # at once - three stories racing ahead in parallel, each spawning
+        # its own agent session per task with nothing pacing them, stalled
+        # the event loop long enough that the gateway's own watchdog killed
+        # the process. _MAX_CONCURRENT_RUNS must bound this.
+        first = _story(id="s-1", phase=None, phase_label="Backlog")
+        second = _story(id="s-2", phase=None, phase_label="Backlog")
+        third = _story(id="s-3", phase=None, phase_label="Backlog")
+
+        with patch.object(board_autorun, "_MAX_CONCURRENT_RUNS", 1), \
+             patch.object(board_autorun, "list_stories", AsyncMock(return_value=[first, second, third])), \
+             patch.object(board_engine, "run_job", AsyncMock(return_value="task-1")) as mocked_run:
+            await board_autorun.autorun_tick(task_runner=object(), project_paths=[str(tmp_path)])
+
+        assert mocked_run.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrency_cap_counts_stories_already_running(self, tmp_path):
+        already_running = _story(id="s-running", current_run={"status": "running"})
+        eligible = _story(id="s-backlog", phase=None, phase_label="Backlog")
+
+        with patch.object(board_autorun, "_MAX_CONCURRENT_RUNS", 1), \
+             patch.object(board_autorun, "list_stories", AsyncMock(return_value=[already_running, eligible])), \
+             patch.object(board_engine, "run_job", AsyncMock(return_value="task-1")) as mocked_run:
+            await board_autorun.autorun_tick(task_runner=object(), project_paths=[str(tmp_path)])
+
+        mocked_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_a_board_error_for_one_story_does_not_stop_the_rest(self, tmp_path):

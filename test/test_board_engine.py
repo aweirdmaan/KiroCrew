@@ -686,6 +686,76 @@ class TestResumePipeline:
             await board_engine.resume_pipeline_from_start(tr, str(tmp_path), "s-1")
 
 
+class TestResumeLastTask:
+    """autorun.py's self-heal path: a "missing" run resumes at EXACTLY the
+    task it names, never a full restart from ideate - see resume_last_task's
+    own docstring for why that distinction is a real cost, not a nicety."""
+
+    @pytest.mark.asyncio
+    async def test_resumes_the_exact_task_the_last_entry_names(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:pipeline"}
+        board_state.save_history(str(tmp_path), "s-1", {
+            "current_run": None,
+            "history": [
+                {"phase": "pipeline", "task_key": "ideate", "iteration": 0, "status": "passed"},
+                {"phase": "pipeline", "task_key": "plan", "iteration": 0, "status": "passed"},
+                {"phase": "pipeline", "task_key": "confirm_plan", "iteration": 0, "status": "passed"},
+                {"phase": "pipeline", "task_key": "approval_check", "iteration": 0, "status": "passed"},
+                {"phase": "pipeline", "task_key": "implement", "iteration": 0, "status": "missing"},
+            ],
+        })
+        task_id = await board_engine.resume_last_task(tr, str(tmp_path), "s-1")
+        # Resumes AT implement - never re-submits ideate/plan/confirm_plan/
+        # approval_check, which already passed.
+        assert len(tr.submissions) == 1
+        assert "rocket-implement" in tr.submissions[0]["content"]
+        data = board_state.load_history(str(tmp_path), "s-1")
+        assert data["current_run"]["task_key"] == "implement"
+        assert data["current_run"]["task_id"] == task_id
+
+    @pytest.mark.asyncio
+    async def test_normalizes_a_legacy_pre_merge_phase_key(self, tmp_path, beads):
+        # A history entry recorded before phases.py merged ideate..retro
+        # into one "pipeline" job still carries its old per-column phase
+        # string - this must still resolve to today's single job.
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:pipeline"}
+        board_state.save_history(str(tmp_path), "s-1", {
+            "current_run": None,
+            "history": [{"phase": "implementation", "task_key": "implement", "iteration": 0, "status": "missing"}],
+        })
+        await board_engine.resume_last_task(tr, str(tmp_path), "s-1")
+        assert "rocket-implement" in tr.submissions[0]["content"]
+        assert beads.labels["s-1"] == {"phase:pipeline"}
+
+    @pytest.mark.asyncio
+    async def test_no_history_raises(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        with pytest.raises(board_engine.BoardError):
+            await board_engine.resume_last_task(tr, str(tmp_path), "s-1")
+
+    @pytest.mark.asyncio
+    async def test_unknown_task_key_raises(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        board_state.save_history(str(tmp_path), "s-1", {
+            "current_run": None,
+            "history": [{"phase": "pipeline", "task_key": "nonexistent", "iteration": 0, "status": "missing"}],
+        })
+        with pytest.raises(board_engine.BoardError):
+            await board_engine.resume_last_task(tr, str(tmp_path), "s-1")
+
+    @pytest.mark.asyncio
+    async def test_manual_phase_raises(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        board_state.save_history(str(tmp_path), "s-1", {
+            "current_run": None,
+            "history": [{"phase": "review", "task_key": "harvest", "iteration": 0, "status": "missing"}],
+        })
+        with pytest.raises(board_engine.BoardError):
+            await board_engine.resume_last_task(tr, str(tmp_path), "s-1")
+
+
 class _CapturingRunner:
     """Bare double that only records the spec_path it was handed - unlike
     FakeTaskRunner, it does NOT read the file synchronously, so it cannot

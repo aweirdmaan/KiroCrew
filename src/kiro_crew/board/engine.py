@@ -41,6 +41,7 @@ from kiro_crew.board.phases import (
     Phase,
     Task,
     next_phase_key,
+    normalize_legacy_phase_key,
 )
 
 if TYPE_CHECKING:
@@ -404,6 +405,51 @@ async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -
     data = board_state.load_history(project_path, story_id)
     task = phase.tasks[0]
     return await _start_and_track(task_runner, project_path, story_id, phase.key, task, 0, data)
+
+
+async def resume_last_task(task_runner: "TaskRunner", project_path: str, story_id: str) -> str:
+    """Resume a "pipeline" story at EXACTLY the task its last history entry
+    names - the one deliberate exception to run_job's "always restart at
+    task 0" contract (see the module docstring for why that's otherwise
+    correct). Used only for autorun.py's self-heal path: a "missing" run
+    (see reconcile_stale_running's own docstring - the run vanished from
+    Task Runner's own bookkeeping, e.g. a gateway restart mid-task) is not
+    known to be WRONG, only untracked, so resubmitting the whole phase from
+    ideate - run_job's default - would burn every earlier task's own real
+    agent turn re-confirming work that already passed, for no reason: the
+    task that actually needs redoing is the one that went missing, nothing
+    upstream of it.
+
+    Raises BoardError if there's no history to resume from, or if the
+    last entry names a phase/task this engine no longer recognizes (a
+    pre-merge legacy phase key is normalized first - see
+    phases.normalize_legacy_phase_key - so an old "implementation"/
+    "implement" entry still resolves to today's "pipeline"/"implement").
+    """
+    existing = _inflight.get(story_id)
+    if existing is not None and not existing.done():
+        data = board_state.load_history(project_path, story_id)
+        current = data.get("current_run")
+        if current and current.get("task_id"):
+            return current["task_id"]
+
+    data = board_state.load_history(project_path, story_id)
+    entries = data.get("history") or []
+    if not entries:
+        raise BoardError(f"story {story_id} has no history to resume")
+    last = entries[-1]
+    phase_key = normalize_legacy_phase_key(last.get("phase", ""))
+    phase = PHASE_BY_KEY.get(phase_key)
+    if phase is None or phase.manual:
+        raise BoardError(f"story {story_id}'s last entry is in unresumable phase {phase_key!r}")
+    task_key = last.get("task_key", "")
+    task = next((t for t in phase.tasks if t.key == task_key), None)
+    if task is None:
+        raise BoardError(f"story {story_id}'s last entry names unknown task {task_key!r}")
+
+    await board_state.set_phase(project_path, story_id, phase.key)
+    iteration = last.get("iteration", 0)
+    return await _start_and_track(task_runner, project_path, story_id, phase.key, task, iteration, data)
 
 
 async def complete_review(

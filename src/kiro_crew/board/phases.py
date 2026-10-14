@@ -137,6 +137,24 @@ PHASE_ORDER: tuple[str, ...] = tuple(p.key for p in PHASES)
 REVIEW_COMPLETION_TASK = Task(key="harvest", skill="rocket-harvest", agent="james")
 
 
+# Phase keys that existed before this module merged ideate..retro into one
+# "pipeline" job (back when the UI was a kanban board with one column per
+# phase) - a history entry recorded before that merge still carries one of
+# these. Mirrors website/src/apps/board/StoryModal.tsx's own
+# LEGACY_PIPELINE_PHASES exactly; keep the two in sync. "review"/"done"
+# were never split out of anything, so they're not here.
+LEGACY_PIPELINE_PHASES: frozenset[str] = frozenset({
+    "grooming", "planning", "plan_review", "approval", "implementation", "verification", "pr",
+})
+
+
+def normalize_legacy_phase_key(phase_key: str) -> str:
+    """A pre-merge phase key, mapped onto today's single "pipeline" job -
+    see LEGACY_PIPELINE_PHASES. Anything else (including "pipeline" itself)
+    passes through unchanged."""
+    return "pipeline" if phase_key in LEGACY_PIPELINE_PHASES else phase_key
+
+
 def next_phase_key(current: str | None) -> str | None:
     """The phase after *current* (``None`` meaning "backlog", before any
     phase has started), or ``None`` if *current* is the last phase."""

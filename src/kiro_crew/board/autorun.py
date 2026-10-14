@@ -13,6 +13,16 @@ beads comment (confirm-plan's OPEN QUESTIONS answer, approval-check's
 APPROVED, a note left after a manual code fix) - so "a comment was posted
 since this story stopped" is the one generic unblock signal this module
 needs, computed once here instead of once per gate type.
+
+Concurrency is capped on purpose (see _MAX_CONCURRENT_RUNS): a human
+clicking "Run next job" naturally paces themselves, but nothing paces an
+unattended tick - a tick that started every eligible story at once, with
+each one's own chain spawning a fresh agent session the moment its
+previous task finished, took down a real gateway during development
+(nine concurrent sessions inside four minutes stalled the event loop past
+the loop watchdog's dump-then-exit threshold). Bounding how many stories
+may be actively running at once is what keeps this feature from being
+able to do that again, not a tuning nicety.
 """
 
 from __future__ import annotations
@@ -33,39 +43,58 @@ logger = logging.getLogger(__name__)
 
 _TICK_INTERVAL_S = 15.0
 
+# How many stories may have an autorun-started pipeline actively running
+# at once, system-wide across every configured project. Each running story
+# owns a real agent session (and that session's own chain spawns a NEW one
+# per task), so this is a real resource bound, not a cosmetic one - see the
+# module docstring for what happens without it. Conservative on purpose;
+# raise it only once the host's headroom under real concurrent agent load
+# has actually been measured, not assumed.
+_MAX_CONCURRENT_RUNS = 1
+
 # Stopped on its own, for a reason only a human can resolve (an unanswered
 # question, a gate that failed and exhausted its own automatic loop, or a
 # plain skill failure) - eligible for retry, but only once a NEW comment
-# shows up (see _should_autorun).
+# shows up (see _autorun_action).
 _BLOCKED_STATUSES = {"gate_failed", "failed"}
 # An infra hiccup, not a content problem (see engine.reconcile_stale_running's
 # own docstring: the run vanished from Task Runner's own bookkeeping, most
 # often a gateway restart mid-run) - nothing for a human to look at, so this
 # retries immediately rather than waiting for a comment that will never come.
+# Resumed at the EXACT task that went missing (engine.resume_last_task), not
+# a full restart from ideate: the task is not known to be wrong, only
+# untracked, and restarting the whole phase would re-run every earlier
+# task's own real agent turn for nothing (confirmed live: a story whose only
+# problem was a missing "implement" entry got ideate/plan/confirm_plan/
+# approval_check all wastefully re-invoked before this fix).
 _SELF_HEAL_STATUSES = {"missing"}
 # "cancelled" is deliberately NOT in either set above: a human explicitly
 # stopping a run is a real stop, not a block waiting on an answer, and this
 # module never overrides an explicit cancel on its own initiative.
 
 
-async def _should_autorun(project_path: str, story: StorySummary) -> bool:
+async def _autorun_action(project_path: str, story: StorySummary) -> str | None:
+    """Which engine entrypoint (if any) this story is ready for right now:
+    "run_job" (start Backlog, or a full restart once a block is lifted),
+    "resume_last_task" (self-heal a "missing" run in place), or None (leave
+    it alone - already running, manual-only, or genuinely blocked)."""
     if story.phase is None:
-        return True  # Backlog: nothing blocks it, start it.
+        return "run_job"  # Backlog: nothing blocks it, start it.
     if story.phase != "pipeline":
-        return False  # "review"/"done" are manual-only (see phases.py).
+        return None  # "review"/"done" are manual-only (see phases.py).
     if story.current_run is not None:
-        return False  # Already running, or its result isn't reconciled yet.
+        return None  # Already running, or its result isn't reconciled yet.
 
     history = board_state.load_history(project_path, story.id)
     entries = history.get("history") or []
     if not entries:
-        return True  # Labeled but genuinely never run yet.
+        return "run_job"  # Labeled but genuinely never run yet.
 
     last_status = entries[-1].get("status")
     if last_status in _SELF_HEAL_STATUSES:
-        return True
+        return "resume_last_task"
     if last_status not in _BLOCKED_STATUSES:
-        return False  # e.g. "cancelled" - an explicit stop, left alone.
+        return None  # e.g. "cancelled" - an explicit stop, left alone.
 
     comments = await run_bd(project_path, "comments", story.id)
     current_count = len(comments) if isinstance(comments, list) else 0
@@ -78,37 +107,60 @@ async def _should_autorun(project_path: str, story: StorySummary) -> bool:
         # and the pipeline would spin retrying instantly forever.
         history["autorun_seen_comment_count"] = current_count
         board_state.save_history(project_path, story.id, history)
-        return False
+        return None
     if current_count > seen:
         history["autorun_seen_comment_count"] = current_count
         board_state.save_history(project_path, story.id, history)
-        return True
-    return False
+        return "run_job"
+    return None
+
+
+def _is_actively_running(story: StorySummary) -> bool:
+    return bool(story.current_run) and story.current_run.get("status") == "running"
 
 
 async def autorun_tick(task_runner: "TaskRunner", project_paths: list[str]) -> None:
     """One pass over every configured project's stories, starting or
-    resuming whichever ones are eligible. Safe to call repeatedly and
-    concurrently with a human's own actions: run_job is itself idempotent
-    (a story already in flight just returns its existing task_id - see its
-    own docstring), so a race with a manual run, or with this tick firing
-    again before the last one's work settled, costs nothing beyond a
-    redundant check.
+    resuming whichever ones are eligible - up to _MAX_CONCURRENT_RUNS
+    actively running at once, system-wide (see the module docstring on
+    why this is a hard resource bound, not a nicety). A story skipped for
+    lack of budget this tick is simply picked up on a later one, once
+    something currently running finishes or blocks.
+
+    Safe to call repeatedly and concurrently with a human's own actions:
+    both engine entrypoints used here are themselves idempotent (a story
+    already in flight just returns its existing task_id), so a race with a
+    manual action, or with this tick firing again before the last one's
+    work settled, costs nothing beyond a redundant check.
     """
+    all_stories: list[tuple[str, StorySummary]] = []
     for project_path in project_paths:
         try:
             stories = await list_stories(project_path)
         except Exception:
             logger.warning("board autorun: listing stories failed for %s", project_path, exc_info=True)
             continue
-        for story in stories:
-            try:
-                if await _should_autorun(project_path, story):
-                    await board_engine.run_job(task_runner, project_path, story.id)
-            except board_engine.BoardError:
-                continue  # Phase changed under us (e.g. a human just advanced it) - fine.
-            except Exception:
-                logger.warning("board autorun: tick failed for story %s", story.id, exc_info=True)
+        all_stories.extend((project_path, story) for story in stories)
+
+    budget = _MAX_CONCURRENT_RUNS - sum(1 for _, s in all_stories if _is_actively_running(s))
+    if budget <= 0:
+        return
+
+    for project_path, story in all_stories:
+        if budget <= 0:
+            break
+        try:
+            action = await _autorun_action(project_path, story)
+            if action == "run_job":
+                await board_engine.run_job(task_runner, project_path, story.id)
+                budget -= 1
+            elif action == "resume_last_task":
+                await board_engine.resume_last_task(task_runner, project_path, story.id)
+                budget -= 1
+        except board_engine.BoardError:
+            continue  # Phase changed under us (e.g. a human just advanced it) - fine.
+        except Exception:
+            logger.warning("board autorun: tick failed for story %s", story.id, exc_info=True)
 
 
 async def autorun_loop(
