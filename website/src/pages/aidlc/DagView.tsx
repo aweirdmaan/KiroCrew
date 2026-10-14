@@ -80,10 +80,21 @@ function effectiveStatusOf(n: DagNode, approvalMap?: Record<number, string>): st
   return n.status
 }
 
-export default function DagView({ nodes, edges, onNodeClick, selectedId, pendingEditIds, approvalMap, onApprove }: {
+export default function DagView({ nodes, edges, onNodeClick, selectedId, pendingEditIds, approvalMap, onApprove, loopAnnotations }: {
   nodes: DagNode[]; edges: DagEdge[]; onNodeClick: (id: string) => void
   selectedId?: string; pendingEditIds?: Set<string>
   approvalMap?: Record<number, string>; onApprove?: (index: number, decision: 'approve' | 'reject') => void
+  // A GENUINE back-edge onto an already-laid-out node (e.g. "confirm loops
+  // back to verify on a failed gate" - see apps/board/StoryModal.tsx).
+  // Deliberately a separate prop from `edges`, never merged into it: these
+  // are drawn from the positions the acyclic layout above already computed,
+  // entirely outside the indegree/layering algorithm, because feeding a
+  // real cycle into that algorithm orphans every node downstream of it
+  // (its indegree never reaches zero, so it's silently dropped from every
+  // layer - confirmed the hard way, not a hypothetical). This is how a
+  // real cycle gets drawn at all: as an annotation on top of an otherwise-
+  // acyclic diagram, never as a laid-out edge.
+  loopAnnotations?: { from: string; to: string; label?: string }[]
 }) {
   const layout = useMemo(() => {
     if (!nodes.length) return { positioned: [], width: 0, height: 0 }
@@ -120,13 +131,18 @@ export default function DagView({ nodes, edges, onNodeClick, selectedId, pending
     <div className="text-[13px] text-center py-8" style={{ color: 'var(--muted)' }}>{i18nT('pages.aidlc.dagView.no_tasks_to_visualize')}</div>
   )
 
+  // How far right of the node column a loop annotation's curve bulges, plus
+  // room for its label - only reserved when there's actually one to draw.
+  const LOOP_BULGE = 56
+  const svgWidth = layout.width + (loopAnnotations?.length ? LOOP_BULGE + 70 : 0)
+
   return (
     <div className="min-w-0">
       {/* Viewport-adaptive cap: grow with the window (leaving ~320px for the page
           header, tab bar and legend) but never below the 480px the view always had,
           so short windows keep today's behavior while tall ones show more layers. */}
       <div className="overflow-auto rounded-lg" style={{ maxHeight: 'max(480px, calc(100vh - 320px))', border: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
-        <svg width={layout.width} height={layout.height}>
+        <svg width={svgWidth} height={layout.height}>
         <defs>
           <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
             <polygon points="0 0, 10 3.5, 0 7" fill="var(--muted)" />
@@ -165,6 +181,30 @@ export default function DagView({ nodes, edges, onNodeClick, selectedId, pending
               <circle r={3} fill="var(--accent)" opacity={0.4}><animateMotion dur="1.5s" begin="0.5s" repeatCount="indefinite" path={d}/></circle>
             </>}
           </g>
+        })}
+        {loopAnnotations?.map((a, i) => {
+          const from = layout.positioned.find(n => n.id === a.from)
+          const to = layout.positioned.find(n => n.id === a.to)
+          if (!from || !to) return null
+          // Exits the right edge of `from`, bulges out to the right of the
+          // whole node column, re-enters the right edge of `to` - a loop
+          // back UP the page, which a straight/curved top-to-bottom path
+          // (like the normal edges above) cannot express without crossing
+          // through every node in between.
+          const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2
+          const x2 = to.x + NODE_W, y2 = to.y + NODE_H / 2
+          const bulgeX = Math.max(x1, x2) + LOOP_BULGE
+          const d = `M${x1},${y1} C${bulgeX},${y1} ${bulgeX},${y2} ${x2},${y2}`
+          return (
+            <g key={`loop-${i}`}>
+              <path d={d} fill="none" stroke="var(--warn)" strokeWidth={1.5} strokeDasharray="2 3" markerEnd="url(#arrow)" opacity={0.75} />
+              {a.label && (
+                <text x={bulgeX + 6} y={(y1 + y2) / 2} fontSize={9} fill="var(--warn)" fontWeight={600}>
+                  {a.label}
+                </text>
+              )}
+            </g>
+          )
         })}
         {layout.positioned.map(n => {
           const ts = TYPE_STYLE[n.task_type || '']

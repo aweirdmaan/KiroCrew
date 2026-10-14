@@ -1470,6 +1470,7 @@
       "needs_human_recommendation_pending": "Pick a path: quick fix or re-plan",
       "dag_review_node": "Review (human)",
       "dag_loop_edge_label": "if changes requested",
+      "dag_verify_loop_label": "repeats until clean",
       "status_running": "Running",
       "status_needs_attention": "Needs attention",
       "status_failed": "Failed",

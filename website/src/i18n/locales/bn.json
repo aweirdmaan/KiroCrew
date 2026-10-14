@@ -5333,6 +5333,7 @@
       "needs_human_recommendation_pending": "একটি পথ বেছে নিন: দ্রুত সমাধান বা পুনঃপরিকল্পনা",
       "dag_review_node": "পর্যালোচনা (মানব)",
       "dag_loop_edge_label": "যদি পরিবর্তনের অনুরোধ করা হয়",
+      "dag_verify_loop_label": "পরিষ্কার না হওয়া পর্যন্ত পুনরাবৃত্তি হয়",
       "status_running": "চলছে",
       "status_needs_attention": "মনোযোগ প্রয়োজন",
       "status_failed": "ব্যর্থ",

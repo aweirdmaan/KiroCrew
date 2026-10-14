@@ -5423,6 +5423,7 @@
       "needs_human_recommendation_pending": "Elige un camino: corrección rápida o replanificación",
       "dag_review_node": "Revisión (humano)",
       "dag_loop_edge_label": "si se solicitan cambios",
+      "dag_verify_loop_label": "se repite hasta quedar limpio",
       "status_running": "En ejecución",
       "status_needs_attention": "Necesita atención",
       "status_failed": "Fallido",

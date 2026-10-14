@@ -167,6 +167,17 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries, storyPhase }: {
   // branch nodes off a "Review" node, not as a real edge back into the
   // already-laid-out implement/ideate nodes (seeDagView's own note on why
   // that would create a real cycle).
+  // confirm's own gate genuinely loops back to verify on a failed gate
+  // (engine.py: Task.loop_back_to, capped) - a REAL cycle, unlike the
+  // Review branch below, so it can't be drawn as another forward edge to a
+  // virtual node; it has to be DagView's own loopAnnotations (a decorative
+  // curve over the already-laid-out positions, never fed into the layering
+  // algorithm - see that prop's own comment on why).
+  const verifyIdx = keys.indexOf('verify'), confirmIdx = keys.indexOf('confirm');
+  const loopAnnotations = (phase === 'pipeline' && verifyIdx !== -1 && confirmIdx !== -1)
+    ? [{ from: String(confirmIdx + 1), to: String(verifyIdx + 1), label: i18nT('apps.board.dag_verify_loop_label') }]
+    : undefined;
+
   if (phase === 'pipeline' && keys.length > 0) {
     const reviewStatus = storyPhase === 'done' ? 'passed' : storyPhase === 'review' ? 'in_progress' : 'pending'
     dagNodes.push(
@@ -226,6 +237,7 @@ function JobGroup({ phase, phaseLabel, taskKeys, entries, storyPhase }: {
                   edges={dagEdges}
                   onNodeClick={id => selectKey(keys[Number(id) - 1] ?? null)}
                   selectedId={selectedIndex ? String(selectedIndex) : undefined}
+                  loopAnnotations={loopAnnotations}
                 />
               )}
               {view === 'phased' && (

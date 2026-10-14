@@ -5333,6 +5333,7 @@
       "needs_human_recommendation_pending": "एक रास्ता चुनें: त्वरित सुधार या पुनः योजना",
       "dag_review_node": "समीक्षा (मानव)",
       "dag_loop_edge_label": "यदि बदलाव का अनुरोध किया गया हो",
+      "dag_verify_loop_label": "साफ़ होने तक दोहराता है",
       "status_running": "चल रहा है",
       "status_needs_attention": "ध्यान देने की आवश्यकता",
       "status_failed": "विफल",

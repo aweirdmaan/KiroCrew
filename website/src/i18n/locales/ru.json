@@ -5513,6 +5513,7 @@
       "needs_human_recommendation_pending": "Выберите путь: быстрое исправление или повторное планирование",
       "dag_review_node": "Проверка (человек)",
       "dag_loop_edge_label": "если запрошены изменения",
+      "dag_verify_loop_label": "повторяется, пока не станет чисто",
       "status_running": "Выполняется",
       "status_needs_attention": "Требует внимания",
       "status_failed": "Ошибка",

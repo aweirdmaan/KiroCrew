@@ -18,6 +18,30 @@ describe('DagView', () => {
     expect(screen.getByText('Needs Approval')).toBeInTheDocument()
   })
 
+  it('draws a loopAnnotation as a decorative curve with its label, without touching node layering', () => {
+    const nodes = [
+      { id: '1', title: 'verify', status: 'passed' },
+      { id: '2', title: 'fix', status: 'passed' },
+      { id: '3', title: 'confirm', status: 'failed' },
+    ]
+    const edges = [{ from: '1', to: '2' }, { from: '2', to: '3' }]
+    const { container } = render(
+      <DagView
+        nodes={nodes} edges={edges} onNodeClick={() => {}}
+        loopAnnotations={[{ from: '3', to: '1', label: 'repeats until clean' }]}
+      />,
+    )
+    // Every node still laid out (a real cycle fed into `edges` instead
+    // would have silently dropped nodes downstream of it - see
+    // loopAnnotations' own doc comment on why it's a separate prop).
+    expect(screen.getByText('verify')).toBeInTheDocument()
+    expect(screen.getByText('fix')).toBeInTheDocument()
+    expect(screen.getByText('confirm')).toBeInTheDocument()
+    expect(screen.getByText('repeats until clean')).toBeInTheDocument()
+    const loopPath = container.querySelector('path[stroke="var(--warn)"]')
+    expect(loopPath).toBeInTheDocument()
+  })
+
   it('shows empty state when no nodes', () => {
     render(<DagView nodes={[]} edges={[]} onNodeClick={() => {}} />)
     expect(screen.getByText(/No tasks to visualize/)).toBeInTheDocument()

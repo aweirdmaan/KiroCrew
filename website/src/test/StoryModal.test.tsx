@@ -208,6 +208,29 @@ describe('StoryModal', () => {
     expect(within(content).getByText('Loop to Planning (re-scope)')).toBeInTheDocument();
   });
 
+  it('the pipeline job\'s DAG shows confirm\'s genuine loop back to verify as a decorative annotation, not a laid-out cycle', async () => {
+    // Regression: unlike the Review branch above, confirm really does
+    // resubmit the EXISTING verify node on a failed gate (engine.py's
+    // Task.loop_back_to) - a true cycle, which the layering algorithm
+    // cannot lay out at all. It must render via DagView's loopAnnotations
+    // (a curve drawn over already-computed positions), not as a second
+    // entry in `edges` pointing back into verify.
+    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+    vi.mocked(boardApi.history).mockResolvedValue({
+      current_run: null,
+      history: [run({ phase: 'pipeline', task_key: 'verify', status: 'passed' })],
+    });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    const job = await screen.findByTestId('board-job-pipeline');
+    fireEvent.click(within(job).getByRole('button', { name: /Pipeline/ }));
+    fireEvent.click(within(job).getByTestId('board-job-pipeline-view-dag'));
+    const content = within(job).getByTestId('board-job-pipeline-view-content');
+
+    await waitFor(() => expect(within(content).getByText('repeats until clean')).toBeInTheDocument());
+  });
+
   it('switching a job to the Phased view lists its tasks with attempt counts', async () => {
     vi.mocked(boardApi.detail).mockResolvedValue(detail());
     vi.mocked(boardApi.history).mockResolvedValue({

@@ -5243,6 +5243,7 @@
       "needs_human_recommendation_pending": "選んでください：クイック修正か再計画か",
       "dag_review_node": "レビュー（人）",
       "dag_loop_edge_label": "変更が要求された場合",
+      "dag_verify_loop_label": "クリーンになるまで繰り返す",
       "status_running": "実行中",
       "status_needs_attention": "要対応",
       "status_failed": "失敗",

@@ -5243,6 +5243,7 @@
       "needs_human_recommendation_pending": "请选择：快速修复还是重新规划",
       "dag_review_node": "评审（人工）",
       "dag_loop_edge_label": "如果请求了更改",
+      "dag_verify_loop_label": "重复直到通过",
       "status_running": "运行中",
       "status_needs_attention": "需要关注",
       "status_failed": "失败",
