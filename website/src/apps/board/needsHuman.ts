@@ -10,11 +10,12 @@
  */
 import type { BoardStory, PhaseDef } from './boardApi'
 
-export type NeedsHumanReason = 'open_questions' | 'gate_failed' | 'manual_review'
+export type NeedsHumanReason = 'open_questions' | 'gate_failed' | 'recommendation_pending' | 'manual_review'
 
 export const NEEDS_HUMAN_LABEL_KEY: Record<NeedsHumanReason, string> = {
   open_questions: 'apps.board.needs_human_open_questions',
   gate_failed: 'apps.board.needs_human_gate_failed',
+  recommendation_pending: 'apps.board.needs_human_recommendation_pending',
   manual_review: 'apps.board.needs_human_manual_review',
 }
 
@@ -25,12 +26,18 @@ export function needsHuman(
   story: Pick<BoardStory, 'current_run'>,
   phase: Pick<PhaseDef, 'key' | 'manual'>,
   pendingOpenQuestions: boolean,
+  // Harvest's RECOMMENDATION comment (rocket-harvest SKILL.md step 5) -
+  // only ever set while the story is sitting in Review after a
+  // "changes_requested" outcome, waiting for a human to pick "Loop to
+  // Implementation" or "Loop to Planning" (see stories.py/engine.py).
+  pendingRecommendation?: string | null,
 ): NeedsHumanReason | null {
   if (pendingOpenQuestions) return 'open_questions'
   // "missing" (the run vanished from Task Runner's own status, e.g. a
   // gateway restart) needs the same "click Run again" action as a real
   // gate failure, so it shares that banner rather than getting its own.
   if (story.current_run?.status === 'gate_failed' || story.current_run?.status === 'missing') return 'gate_failed'
+  if (pendingRecommendation) return 'recommendation_pending'
   if (phase.manual && phase.key !== 'done') return 'manual_review'
   return null
 }

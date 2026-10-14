@@ -27,7 +27,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from '@dnd-kit/utilities'
 import {
   GripVertical, PlayCircle, CheckCircle2, AlertTriangle, Loader2, Check, X, CalendarPlus,
-  GanttChart, ChevronDown, ChevronRight,
+  GanttChart, ChevronDown, ChevronRight, Wrench, Undo2, XCircle,
 } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -272,7 +272,7 @@ function StoryBar({
     document.addEventListener('pointercancel', onCancel)
   }
 
-  const humanReason = needsHuman(story, { key: story.phase ?? '', manual: story.phase === 'review' || story.phase === 'done' }, story.pending_open_questions)
+  const humanReason = needsHuman(story, { key: story.phase ?? '', manual: story.phase === 'review' || story.phase === 'done' }, story.pending_open_questions, story.recommendation)
   const color = barColorClass(story, humanReason)
   const labelOutside = width < 90
 
@@ -312,7 +312,8 @@ function StoryBar({
 }
 
 function StoryRow({
-  story, scale, phases, busy, striped, onReschedule, onOpen, onRun, onAdvance,
+  story, scale, phases, busy, striped, onReschedule, onOpen, onRun,
+  onApprove, onRequestChanges, onResumeImplementation, onResumePlanning,
 }: {
   story: BoardStory
   scale: TimeScale
@@ -322,14 +323,18 @@ function StoryRow({
   onReschedule: (startDate: string, dueDate: string) => void
   onOpen: () => void
   onRun: () => void
-  onAdvance: (mrUrl: string) => void
+  onApprove: (mrUrl: string) => void
+  onRequestChanges: (mrUrl: string) => void
+  onResumeImplementation: () => void
+  onResumePlanning: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: story.id })
   const phase = phases.find(p => p.key === story.phase) ?? { key: '', label: '', tasks: [], manual: false }
-  const humanReason = needsHuman(story, phase, story.pending_open_questions)
+  const humanReason = needsHuman(story, phase, story.pending_open_questions, story.recommendation)
   const running = story.current_run?.status === 'running'
   const canRun = !phase.manual && !running
-  const canAdvance = story.phase === 'review' && !running
+  const canAdvance = story.phase === 'review' && !running && !story.recommendation
+  const canLoopBack = story.phase === 'review' && !running && !!story.recommendation
   const [showAdvanceForm, setShowAdvanceForm] = useState(false)
   const [mrUrl, setMrUrl] = useState('')
 
@@ -405,11 +410,22 @@ function StoryRow({
             <button
               type="button"
               disabled={!mrUrl.trim() || busy}
-              onClick={() => onAdvance(mrUrl.trim())}
+              onClick={() => onApprove(mrUrl.trim())}
               className="text-ok cursor-pointer disabled:opacity-50"
               data-testid={`timeline-advance-confirm-${story.id}`}
+              title={i18nT('apps.board.mark_reviewed_done')}
             >
               <Check size={13} />
+            </button>
+            <button
+              type="button"
+              disabled={!mrUrl.trim() || busy}
+              onClick={() => onRequestChanges(mrUrl.trim())}
+              className="text-warn cursor-pointer disabled:opacity-50"
+              data-testid={`timeline-request-changes-confirm-${story.id}`}
+              title={i18nT('apps.board.request_changes')}
+            >
+              <XCircle size={13} />
             </button>
             <button
               type="button"
@@ -418,6 +434,30 @@ function StoryRow({
               data-testid={`timeline-advance-cancel-${story.id}`}
             >
               <X size={13} />
+            </button>
+          </div>
+        )}
+        {canLoopBack && (
+          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()} title={story.recommendation ?? ''}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onResumeImplementation}
+              className="text-accent hover:opacity-80 cursor-pointer disabled:opacity-50 shrink-0"
+              data-testid={`timeline-resume-implementation-${story.id}`}
+              title={i18nT('apps.board.loop_to_implementation')}
+            >
+              <Wrench size={15} />
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onResumePlanning}
+              className="text-warn hover:opacity-80 cursor-pointer disabled:opacity-50 shrink-0"
+              data-testid={`timeline-resume-planning-${story.id}`}
+              title={i18nT('apps.board.loop_to_planning')}
+            >
+              <Undo2 size={15} />
             </button>
           </div>
         )}
@@ -487,7 +527,8 @@ function DependencyArrows({ stories, scale, rowIndex }: { stories: BoardStory[];
 }
 
 function EpicSection({
-  epicId, epicTitle, stories, scale, phases, busy, onReorder, onReschedule, onOpen, onRun, onAdvance,
+  epicId, epicTitle, stories, scale, phases, busy, onReorder, onReschedule, onOpen, onRun,
+  onApprove, onRequestChanges, onResumeImplementation, onResumePlanning,
 }: {
   epicId: string
   epicTitle: string
@@ -499,7 +540,10 @@ function EpicSection({
   onReschedule: (storyId: string, startDate: string, dueDate: string) => void
   onOpen: (story: BoardStory) => void
   onRun: (storyId: string) => void
-  onAdvance: (storyId: string, mrUrl: string) => void
+  onApprove: (storyId: string, mrUrl: string) => void
+  onRequestChanges: (storyId: string, mrUrl: string) => void
+  onResumeImplementation: (storyId: string) => void
+  onResumePlanning: (storyId: string) => void
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
   const rowIndex = useMemo(() => new Map(stories.map((s, i) => [s.id, i])), [stories])
@@ -557,7 +601,10 @@ function EpicSection({
                     onReschedule={(s, d) => onReschedule(story.id, s, d)}
                     onOpen={() => onOpen(story)}
                     onRun={() => onRun(story.id)}
-                    onAdvance={mrUrl => onAdvance(story.id, mrUrl)}
+                    onApprove={mrUrl => onApprove(story.id, mrUrl)}
+                    onRequestChanges={mrUrl => onRequestChanges(story.id, mrUrl)}
+                    onResumeImplementation={() => onResumeImplementation(story.id)}
+                    onResumePlanning={() => onResumePlanning(story.id)}
                   />
                 ))}
               </div>
@@ -614,7 +661,21 @@ export default function TimelinePage() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
   })
   const advanceMutation = useMutation({
-    mutationFn: ({ storyId, mrUrl }: { storyId: string; mrUrl: string }) => boardApi.advance(storyId, mrUrl),
+    mutationFn: ({ storyId, mrUrl, outcome }: { storyId: string; mrUrl: string; outcome?: 'approved' | 'changes_requested' }) =>
+      boardApi.advance(storyId, mrUrl, outcome),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
+  })
+  // The two buttons a human picks from once harvest has posted a
+  // RECOMMENDATION (see needsHuman's 'recommendation_pending' reason) -
+  // both reset the story's phase back to "pipeline" server-side, so the
+  // card simply reappears with "Run next job" available again once this
+  // settles, same as any other phase transition.
+  const resumeImplementationMutation = useMutation({
+    mutationFn: (storyId: string) => boardApi.resumeImplementation(storyId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
+  })
+  const resumePlanningMutation = useMutation({
+    mutationFn: (storyId: string) => boardApi.resumePlanning(storyId),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
   })
   type StoriesData = { stories: BoardStory[]; project_paths: string[] }
@@ -668,6 +729,7 @@ export default function TimelinePage() {
   }, [storiesQuery.data])
 
   const busy = runMutation.isPending || advanceMutation.isPending || updateMutation.isPending
+    || resumeImplementationMutation.isPending || resumePlanningMutation.isPending
   const loading = phasesQuery.isLoading || storiesQuery.isLoading
 
   const handleReorder = (epicStories: BoardStory[], movedId: string, orderedIds: string[]) => {
@@ -733,7 +795,10 @@ export default function TimelinePage() {
                   updateMutation.mutate({ storyId, fields: { start_date: startDate, due_date: dueDate } })}
                 onOpen={setOpenStory}
                 onRun={storyId => runMutation.mutate(storyId)}
-                onAdvance={(storyId, mrUrl) => advanceMutation.mutate({ storyId, mrUrl })}
+                onApprove={(storyId, mrUrl) => advanceMutation.mutate({ storyId, mrUrl, outcome: 'approved' })}
+                onRequestChanges={(storyId, mrUrl) => advanceMutation.mutate({ storyId, mrUrl, outcome: 'changes_requested' })}
+                onResumeImplementation={storyId => resumeImplementationMutation.mutate(storyId)}
+                onResumePlanning={storyId => resumePlanningMutation.mutate(storyId)}
               />
             ))
           )}

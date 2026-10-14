@@ -155,3 +155,29 @@ async def last_gate_comment(project_path: str, story_id: str) -> str | None:
 
 def gate_passed(gate_line: str | None) -> bool:
     return bool(gate_line) and gate_line.startswith("GATE: PASS")
+
+
+_RECOMMENDATION_PREFIX = "RECOMMENDATION:"
+
+
+async def last_recommendation_comment(project_path: str, story_id: str) -> str | None:
+    """The last comment line starting with "RECOMMENDATION:" - rocket-harvest's
+    own convention (step 5 of its SKILL.md) for proposing, after a reviewer
+    asked for a story change, whether it is small enough to loop straight
+    back into implementation ("QUICK_FIX") or big enough to re-enter
+    planning ("RE_PLAN"). Read-only input to a human's choice - the engine
+    never acts on it by itself (see board/engine.py's resume_pipeline_at /
+    resume_pipeline_from_start, both triggered by an explicit board click,
+    never by this function)."""
+    comments = await run_bd(project_path, "comments", story_id)
+    if not isinstance(comments, list):
+        return None
+    last: str | None = None
+    for comment in comments:
+        text = comment.get("text") if isinstance(comment, dict) else None
+        if not isinstance(text, str):
+            continue
+        for line in text.splitlines():
+            if line.startswith(_RECOMMENDATION_PREFIX):
+                last = line
+    return last

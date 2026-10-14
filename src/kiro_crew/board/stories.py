@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from kiro_crew.bd_cli import run_bd
 from kiro_crew.board import engine as board_engine
+from kiro_crew.board import state as board_state
 from kiro_crew.board.open_questions import last_comment_has_pending_open_questions
 from kiro_crew.board.phases import PHASE_BY_KEY
 
@@ -19,6 +20,13 @@ from kiro_crew.board.phases import PHASE_BY_KEY
 # questions still unanswered until confirm_plan (also in this phase) runs
 # and actually checks them.
 _PHASES_WHERE_QUESTIONS_MAY_BE_PENDING = {"pipeline"}
+
+# The only phase a RECOMMENDATION comment (rocket-harvest's SKILL.md step 5)
+# can be sitting unread: harvest only ever runs from here (see
+# engine.REVIEW_COMPLETION_TASK), and a "changes_requested" outcome leaves
+# the story in Review on purpose for a human to read it and pick a loop-back
+# - see engine.resume_pipeline_at / resume_pipeline_from_start.
+_PHASES_WHERE_RECOMMENDATION_MAY_BE_PENDING = {"review"}
 
 # Scheduling fields live as beads' own native extension points rather than a
 # bespoke sidecar store: `due_at` is a first-class issue field (`bd update
@@ -47,6 +55,7 @@ class StorySummary:
     priority: int | None
     owner: str
     pending_open_questions: bool
+    recommendation: str | None
     start_date: str | None
     due_date: str | None
     rank: float | None
@@ -108,6 +117,9 @@ async def list_stories(project_path: str) -> list[StorySummary]:
             comments = await run_bd(project_path, "comments", story_id)
             if isinstance(comments, list):
                 pending_open_questions = last_comment_has_pending_open_questions(comments)
+        recommendation = None
+        if phase_key in _PHASES_WHERE_RECOMMENDATION_MAY_BE_PENDING:
+            recommendation = await board_state.last_recommendation_comment(project_path, story_id)
         metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
         depends_on = [
             dep["depends_on_id"] for dep in (row.get("dependencies") or [])
@@ -126,6 +138,7 @@ async def list_stories(project_path: str) -> list[StorySummary]:
             priority=row.get("priority"),
             owner=row.get("owner", ""),
             pending_open_questions=pending_open_questions,
+            recommendation=recommendation,
             start_date=metadata.get(_START_DATE_METADATA_KEY),
             due_date=row.get("due_at"),
             rank=_coerce_rank(metadata.get(_RANK_METADATA_KEY)),

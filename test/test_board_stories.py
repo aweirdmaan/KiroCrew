@@ -136,7 +136,11 @@ async def test_does_not_flag_once_answered(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_does_not_check_comments_outside_pipeline(tmp_path):
+async def test_does_not_check_open_questions_outside_pipeline(tmp_path):
+    # Open-questions comments are only ever checked in "pipeline" (plan has
+    # no gate of its own) - "review" instead checks for a RECOMMENDATION
+    # comment (see test_flags_pending_recommendation_in_review_phase below),
+    # a different concern scoped to a different phase.
     rows = [
         {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
@@ -146,11 +150,59 @@ async def test_does_not_check_comments_outside_pipeline(tmp_path):
     async def fake_run_bd(project_path, *args):
         if args[0] == "list":
             return rows
-        raise AssertionError(f"unexpected bd call outside pipeline: {args}")
+        if args == ("comments", "epic-1.1"):
+            return []
+        raise AssertionError(f"unexpected bd call: {args}")
+
+    from kiro_crew.board import state as board_state
+    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd), \
+         patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+        summaries = await board_stories.list_stories(str(tmp_path))
+    assert summaries[0].pending_open_questions is False
+    assert summaries[0].recommendation is None
+
+
+@pytest.mark.asyncio
+async def test_does_not_check_recommendation_outside_review(tmp_path):
+    rows = [
+        {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
+        {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
+         "parent": "epic-1", "status": "open", "labels": ["phase:pipeline"]},
+    ]
+
+    async def fake_run_bd(project_path, *args):
+        if args[0] == "list":
+            return rows
+        if args == ("comments", "epic-1.1"):
+            return []
+        raise AssertionError(f"unexpected bd call: {args}")
 
     with patch.object(board_stories, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
-    assert summaries[0].pending_open_questions is False
+    assert summaries[0].recommendation is None
+
+
+@pytest.mark.asyncio
+async def test_flags_pending_recommendation_in_review_phase(tmp_path):
+    rows = [
+        {"id": "epic-1", "title": "Epic", "issue_type": "epic", "status": "open"},
+        {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
+         "parent": "epic-1", "status": "open", "labels": ["phase:review"]},
+    ]
+    comments = [{"text": "RECOMMENDATION: QUICK_FIX tweak the validator"}]
+
+    async def fake_run_bd(project_path, *args):
+        if args[0] == "list":
+            return rows
+        if args == ("comments", "epic-1.1"):
+            return comments
+        raise AssertionError(f"unexpected bd call: {args}")
+
+    from kiro_crew.board import state as board_state
+    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd), \
+         patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+        summaries = await board_stories.list_stories(str(tmp_path))
+    assert summaries[0].recommendation == "RECOMMENDATION: QUICK_FIX tweak the validator"
 
 
 @pytest.mark.asyncio

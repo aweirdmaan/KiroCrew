@@ -76,6 +76,7 @@ async def list_board_stories(request: web.Request) -> web.Response:
                 "current_run": story.current_run,
                 "priority": story.priority, "owner": story.owner,
                 "pending_open_questions": story.pending_open_questions,
+                "recommendation": story.recommendation,
                 "start_date": story.start_date, "due_date": story.due_date,
                 "rank": story.rank, "depends_on": story.depends_on,
                 "story_points": story.story_points,
@@ -101,12 +102,19 @@ async def run_story_job(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "task_id": task_id})
 
 
+_ADVANCE_OUTCOMES = {"approved", "changes_requested"}
+
+
 async def advance_story(request: web.Request) -> web.Response:
-    """POST /api/board/stories/{id}/advance — the one manual transition,
-    Review -> Done. Body: {"mr_url": "..."} - runs rocket-harvest against
-    that MR/PR URL (a human supplies it after reading its review comments,
-    matching rocket-dag.sh's separate `harvest` command), then advances on
-    success."""
+    """POST /api/board/stories/{id}/advance — the Review phase's job. Body:
+    {"mr_url": "...", "outcome"?: "approved" | "changes_requested"} - runs
+    rocket-harvest against that MR/PR URL (a human supplies it after reading
+    its review comments, matching rocket-dag.sh's separate `harvest`
+    command). "approved" (default) advances to Done on success, same as
+    before. "changes_requested" also runs harvest (it records every comment
+    and, per its SKILL.md step 5, posts a RECOMMENDATION comment) but keeps
+    the story in Review - see resume_implementation/resume_planning below
+    for the two buttons a human picks from next."""
     state: DashboardState = request.app["state"]
     if not state.task_runner:
         return web.json_response(
@@ -123,8 +131,55 @@ async def advance_story(request: web.Request) -> web.Response:
     mr_url = body.get("mr_url", "")
     if not isinstance(mr_url, str) or not mr_url.strip():
         return web.json_response({"error": "mr_url required", "code": "empty_mr_url"}, status=400)
+    outcome = body.get("outcome", "approved")
+    if outcome not in _ADVANCE_OUTCOMES:
+        return web.json_response({"error": "invalid outcome", "code": "bad_outcome"}, status=400)
     try:
-        task_id = await board_engine.complete_review(state.task_runner, project_path, story_id, mr_url.strip())
+        task_id = await board_engine.complete_review(
+            state.task_runner, project_path, story_id, mr_url.strip(), outcome=outcome,
+        )
+    except board_engine.BoardError as exc:
+        return web.json_response({"error": str(exc), "code": "board_phase_error"}, status=400)
+    return web.json_response({"ok": True, "task_id": task_id})
+
+
+async def resume_implementation(request: web.Request) -> web.Response:
+    """POST /api/board/stories/{id}/resume-implementation — "Loop to
+    Implementation": a human read harvest's RECOMMENDATION and judged the
+    requested change small enough to go straight back into the pipeline's
+    `implement` task, skipping ideate/plan/confirm_plan/approval_check."""
+    state: DashboardState = request.app["state"]
+    if not state.task_runner:
+        return web.json_response(
+            {"error": "task runner not available", "code": "task_runner_unavailable"}, status=400
+        )
+    story_id = request.match_info["id"]
+    project_path = await _find_story_project(story_id)
+    if project_path is None:
+        return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
+    try:
+        task_id = await board_engine.resume_pipeline_at(state.task_runner, project_path, story_id, "implement")
+    except board_engine.BoardError as exc:
+        return web.json_response({"error": str(exc), "code": "board_phase_error"}, status=400)
+    return web.json_response({"ok": True, "task_id": task_id})
+
+
+async def resume_planning(request: web.Request) -> web.Response:
+    """POST /api/board/stories/{id}/resume-planning — "Loop to Planning": a
+    human read harvest's RECOMMENDATION and judged the requested change a
+    re-scope, re-entering the pipeline from its first task (ideate/plan),
+    the same re-scope path rocket-confirm-plan's own gate already uses."""
+    state: DashboardState = request.app["state"]
+    if not state.task_runner:
+        return web.json_response(
+            {"error": "task runner not available", "code": "task_runner_unavailable"}, status=400
+        )
+    story_id = request.match_info["id"]
+    project_path = await _find_story_project(story_id)
+    if project_path is None:
+        return web.json_response({"error": "story not found", "code": "story_not_found"}, status=404)
+    try:
+        task_id = await board_engine.resume_pipeline_from_start(state.task_runner, project_path, story_id)
     except board_engine.BoardError as exc:
         return web.json_response({"error": str(exc), "code": "board_phase_error"}, status=400)
     return web.json_response({"ok": True, "task_id": task_id})
@@ -264,6 +319,8 @@ def setup_board_routes(app: web.Application) -> None:
     app.router.add_get("/api/board/stories", list_board_stories)
     app.router.add_post("/api/board/stories/{id}/run", run_story_job)
     app.router.add_post("/api/board/stories/{id}/advance", advance_story)
+    app.router.add_post("/api/board/stories/{id}/resume-implementation", resume_implementation)
+    app.router.add_post("/api/board/stories/{id}/resume-planning", resume_planning)
     app.router.add_get("/api/board/stories/{id}/history", get_story_history)
     app.router.add_get("/api/board/stories/{id}/detail", get_story_detail_route)
     app.router.add_post("/api/board/stories/{id}/comments", add_story_comment)

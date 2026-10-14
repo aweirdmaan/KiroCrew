@@ -15,6 +15,8 @@ vi.mock('../apps/board/boardApi', async () => {
       detail: vi.fn(),
       run: vi.fn(),
       advance: vi.fn(),
+      resumeImplementation: vi.fn(),
+      resumePlanning: vi.fn(),
       addComment: vi.fn(),
       updateStory: vi.fn(),
       addDependency: vi.fn(),
@@ -34,7 +36,7 @@ function story(overrides: Partial<BoardStory> = {}): BoardStory {
     id: 's-1', title: 'Story one', status: 'open',
     epic_id: 'e-1', epic_title: 'Calculator App', project_path: '/proj',
     phase: null, phase_label: 'Backlog', current_run: null,
-    priority: null, owner: '', pending_open_questions: false,
+    priority: null, owner: '', pending_open_questions: false, recommendation: null,
     start_date: null, due_date: null, rank: null, depends_on: [],
     ...overrides,
   };
@@ -286,7 +288,50 @@ describe('TimelinePage', () => {
     fireEvent.change(input, { target: { value: 'https://example.com/mr/9' } });
     fireEvent.click(screen.getByTestId('timeline-advance-confirm-s-1'));
 
-    await waitFor(() => expect(boardApi.advance).toHaveBeenCalledWith('s-1', 'https://example.com/mr/9'));
+    await waitFor(() => expect(boardApi.advance).toHaveBeenCalledWith('s-1', 'https://example.com/mr/9', 'approved'));
+  });
+
+  it('requesting changes on a Review-phase story passes "changes_requested" as the outcome', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({ phase: 'review', phase_label: 'Review' })],
+      project_paths: ['/proj'],
+    });
+    vi.mocked(boardApi.advance).mockResolvedValue({ ok: true, task_id: 'task-2' });
+
+    renderWithProviders(<TimelinePage />);
+    await waitFor(() => expect(screen.getByTestId('timeline-advance-s-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('timeline-advance-s-1'));
+
+    const input = await screen.findByTestId('timeline-advance-mr-url-s-1');
+    fireEvent.change(input, { target: { value: 'https://example.com/mr/9' } });
+    fireEvent.click(screen.getByTestId('timeline-request-changes-confirm-s-1'));
+
+    await waitFor(() => expect(boardApi.advance).toHaveBeenCalledWith('s-1', 'https://example.com/mr/9', 'changes_requested'));
+  });
+
+  it('a story with a pending harvest recommendation shows the two loop-back buttons instead of the advance form', async () => {
+    vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
+    vi.mocked(boardApi.stories).mockResolvedValue({
+      stories: [story({
+        phase: 'review', phase_label: 'Review',
+        recommendation: 'RECOMMENDATION: QUICK_FIX tweak the validator',
+      })],
+      project_paths: ['/proj'],
+    });
+    vi.mocked(boardApi.resumeImplementation).mockResolvedValue({ ok: true, task_id: 'task-3' });
+    vi.mocked(boardApi.resumePlanning).mockResolvedValue({ ok: true, task_id: 'task-4' });
+
+    renderWithProviders(<TimelinePage />);
+    await waitFor(() => expect(screen.getByTestId('timeline-resume-implementation-s-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('timeline-advance-s-1')).toBeNull()
+    expect(screen.getByTestId('timeline-needs-human-s-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('timeline-resume-implementation-s-1'));
+    await waitFor(() => expect(boardApi.resumeImplementation).toHaveBeenCalledWith('s-1'));
+
+    fireEvent.click(screen.getByTestId('timeline-resume-planning-s-1'));
+    await waitFor(() => expect(boardApi.resumePlanning).toHaveBeenCalledWith('s-1'));
   });
 
   it('collapsing an epic hides its rows without losing the other epic', async () => {

@@ -107,6 +107,26 @@ class TestGateComment:
             result = await board_state.last_gate_comment("/proj", "s-1")
         assert result == "GATE: PASS embedded"
 
+
+class TestRecommendationComment:
+    @pytest.mark.asyncio
+    async def test_no_comments_is_none(self):
+        with patch.object(board_state, "run_bd", AsyncMock(return_value=[])):
+            result = await board_state.last_recommendation_comment("/proj", "s-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_finds_the_last_recommendation_line_across_comments(self):
+        comments = [
+            {"text": "some unrelated note"},
+            {"text": "RECOMMENDATION: RE_PLAN scope changed"},
+            {"text": "a later comment"},
+            {"text": "RECOMMENDATION: QUICK_FIX tweak the validator"},
+        ]
+        with patch.object(board_state, "run_bd", AsyncMock(return_value=comments)):
+            result = await board_state.last_recommendation_comment("/proj", "s-1")
+        assert result == "RECOMMENDATION: QUICK_FIX tweak the validator"
+
     def test_gate_passed(self):
         assert board_state.gate_passed("GATE: PASS") is True
         assert board_state.gate_passed("GATE: PASS reason") is True

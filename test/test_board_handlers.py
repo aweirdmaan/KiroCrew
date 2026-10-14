@@ -52,7 +52,7 @@ class TestListStories:
         summary = StorySummary(
             id="s-1", title="Story", status="open", epic_id="e-1", epic_title="Epic",
             project_path="/proj", phase="pipeline", phase_label="Pipeline", current_run=None,
-            priority=1, owner="amaan", pending_open_questions=True,
+            priority=1, owner="amaan", pending_open_questions=True, recommendation=None,
             start_date="2026-10-01", due_date="2026-10-15T00:00:00Z", rank=1.5, depends_on=["s-0"],
             story_points=5.0,
         )
@@ -69,6 +69,7 @@ class TestListStories:
         assert data["stories"][0]["rank"] == 1.5
         assert data["stories"][0]["depends_on"] == ["s-0"]
         assert data["stories"][0]["story_points"] == 5.0
+        assert data["stories"][0]["recommendation"] is None
 
 
 class TestRunStoryJob:
@@ -121,7 +122,33 @@ class TestAdvanceStory:
             resp = await board_handlers.advance_story(req)
         data = await _body(resp)
         assert data == {"ok": True, "task_id": "task-999"}
-        mocked.assert_called_once_with(req.app["state"].task_runner, "/proj", "s-1", "https://example.com/mr/1")
+        mocked.assert_called_once_with(
+            req.app["state"].task_runner, "/proj", "s-1", "https://example.com/mr/1", outcome="approved",
+        )
+
+    @pytest.mark.asyncio
+    async def test_changes_requested_outcome_is_passed_through(self):
+        req = _request("POST", "/api/board/stories/s-1/advance", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(
+                 return_value=({"mr_url": "https://example.com/mr/1", "outcome": "changes_requested"}, None))), \
+             patch.object(board_engine, "complete_review", AsyncMock(return_value="task-999")) as mocked:
+            resp = await board_handlers.advance_story(req)
+        assert resp.status == 200
+        mocked.assert_called_once_with(
+            req.app["state"].task_runner, "/proj", "s-1", "https://example.com/mr/1", outcome="changes_requested",
+        )
+
+    @pytest.mark.asyncio
+    async def test_invalid_outcome_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/advance", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_handlers, "read_bounded_json", AsyncMock(
+                 return_value=({"mr_url": "https://example.com/mr/1", "outcome": "bogus"}, None))):
+            resp = await board_handlers.advance_story(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "bad_outcome"
 
     @pytest.mark.asyncio
     async def test_blank_mr_url_is_400(self):
@@ -132,6 +159,38 @@ class TestAdvanceStory:
         assert resp.status == 400
         data = await _body(resp)
         assert data["code"] == "empty_mr_url"
+
+
+class TestResumePipeline:
+    @pytest.mark.asyncio
+    async def test_resume_implementation_calls_resume_pipeline_at_implement(self):
+        req = _request("POST", "/api/board/stories/s-1/resume-implementation", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_engine, "resume_pipeline_at", AsyncMock(return_value="task-7")) as mocked:
+            resp = await board_handlers.resume_implementation(req)
+        data = await _body(resp)
+        assert data == {"ok": True, "task_id": "task-7"}
+        mocked.assert_called_once_with(req.app["state"].task_runner, "/proj", "s-1", "implement")
+
+    @pytest.mark.asyncio
+    async def test_resume_implementation_board_error_is_400(self):
+        req = _request("POST", "/api/board/stories/s-1/resume-implementation", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_engine, "resume_pipeline_at", AsyncMock(side_effect=board_engine.BoardError("nope"))):
+            resp = await board_handlers.resume_implementation(req)
+        assert resp.status == 400
+        data = await _body(resp)
+        assert data["code"] == "board_phase_error"
+
+    @pytest.mark.asyncio
+    async def test_resume_planning_calls_resume_pipeline_from_start(self):
+        req = _request("POST", "/api/board/stories/s-1/resume-planning", match_info={"id": "s-1"})
+        with patch.object(board_handlers, "_find_story_project", AsyncMock(return_value="/proj")), \
+             patch.object(board_engine, "resume_pipeline_from_start", AsyncMock(return_value="task-8")) as mocked:
+            resp = await board_handlers.resume_planning(req)
+        data = await _body(resp)
+        assert data == {"ok": True, "task_id": "task-8"}
+        mocked.assert_called_once_with(req.app["state"].task_runner, "/proj", "s-1")
 
     @pytest.mark.asyncio
     async def test_missing_mr_url_is_400(self):

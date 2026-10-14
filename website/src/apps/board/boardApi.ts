@@ -61,6 +61,7 @@ export interface BoardStory {
   priority: number | null
   owner: string
   pending_open_questions: boolean
+  recommendation: string | null
   start_date: string | null
   due_date: string | null
   rank: number | null
@@ -114,8 +115,14 @@ export const boardApi = {
   history: (storyId: string) => coreGet<StoryHistory>(`/stories/${encodeURIComponent(storyId)}/history`),
   detail: (storyId: string) => coreGet<StoryDetail>(`/stories/${encodeURIComponent(storyId)}/detail`),
   run: (storyId: string) => corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/run`),
-  advance: (storyId: string, mrUrl: string) =>
-    corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/advance`, { mr_url: mrUrl }),
+  advance: (storyId: string, mrUrl: string, outcome: 'approved' | 'changes_requested' = 'approved') =>
+    corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/advance`, {
+      mr_url: mrUrl, outcome,
+    }),
+  resumeImplementation: (storyId: string) =>
+    corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/resume-implementation`),
+  resumePlanning: (storyId: string) =>
+    corePost<{ ok: boolean; task_id: string }>(`/stories/${encodeURIComponent(storyId)}/resume-planning`),
   addComment: (storyId: string, text: string) =>
     corePost<{ ok: boolean }>(`/stories/${encodeURIComponent(storyId)}/comments`, { text }),
   updateStory: (storyId: string, fields: UpdateStoryFields) =>

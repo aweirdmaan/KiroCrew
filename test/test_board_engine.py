@@ -547,6 +547,66 @@ class TestReviewCompletion:
         await _await_inflight("s-1")
         assert beads.labels["s-1"] == {"phase:review"}
 
+    @pytest.mark.asyncio
+    async def test_changes_requested_outcome_stays_in_review_even_on_success(self, tmp_path, beads):
+        # harvest still runs (records comments, files improvement proposals,
+        # posts a RECOMMENDATION per its SKILL.md step 5), but a
+        # "changes_requested" outcome must NOT advance to Done on its own -
+        # a human picks resume_pipeline_at/resume_pipeline_from_start next.
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:review"}
+        task_id = await board_engine.complete_review(
+            tr, str(tmp_path), "s-1", "https://example.com/mr/1", outcome="changes_requested",
+        )
+        tr.set_result(task_id, "passed", "harvest done, RECOMMENDATION: QUICK_FIX tweak the validator")
+        await _await_inflight("s-1")
+        assert beads.labels["s-1"] == {"phase:review"}
+
+
+class TestResumePipeline:
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_at_implement_skips_ideate_through_approval_check(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:review"}
+        task_id = await board_engine.resume_pipeline_at(tr, str(tmp_path), "s-1", "implement")
+        assert "rocket-implement" in tr.submissions[0]["content"]
+        assert beads.labels["s-1"] == {"phase:pipeline"}
+        data = board_state.load_history(str(tmp_path), "s-1")
+        assert data["current_run"]["task_key"] == "implement"
+        assert data["current_run"]["task_id"] == task_id
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_at_wrong_phase_raises(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:pipeline"}
+        with pytest.raises(board_engine.BoardError):
+            await board_engine.resume_pipeline_at(tr, str(tmp_path), "s-1", "implement")
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_at_unknown_task_raises(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:review"}
+        with pytest.raises(board_engine.BoardError):
+            await board_engine.resume_pipeline_at(tr, str(tmp_path), "s-1", "nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_from_start_resets_phase_and_runs_ideate(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:review"}
+        task_id = await board_engine.resume_pipeline_from_start(tr, str(tmp_path), "s-1")
+        assert "rocket-ideate" in tr.submissions[0]["content"]
+        assert beads.labels["s-1"] == {"phase:pipeline"}
+        data = board_state.load_history(str(tmp_path), "s-1")
+        assert data["current_run"]["task_key"] == "ideate"
+        assert data["current_run"]["task_id"] == task_id
+
+    @pytest.mark.asyncio
+    async def test_resume_pipeline_from_start_wrong_phase_raises(self, tmp_path, beads):
+        tr = FakeTaskRunner()
+        beads.labels["s-1"] = {"phase:pipeline"}
+        with pytest.raises(board_engine.BoardError):
+            await board_engine.resume_pipeline_from_start(tr, str(tmp_path), "s-1")
+
 
 class _CapturingRunner:
     """Bare double that only records the spec_path it was handed - unlike

@@ -188,10 +188,18 @@ async def _reconcile(
 
     if phase_key == "review":
         # The one-off harvest task, not part of PHASES - always terminal,
-        # no gate, no loop: success advances to Done, failure just leaves
-        # the story in Review for the human to retry "Mark reviewed" later.
+        # no gate, no loop. On a clean approval (outcome "approved", the
+        # default - see complete_review), success advances to Done, failure
+        # just leaves the story in Review for the human to retry later. On
+        # "changes_requested", harvest succeeding means it finished reading
+        # the MR and (per its SKILL.md step 5) posted a RECOMMENDATION
+        # comment - the story stays in Review either way: a human reads the
+        # recommendation and clicks "Loop to Implementation"/"Loop to
+        # Planning" themselves (resume_pipeline_at /
+        # resume_pipeline_from_start below), never advanced here.
+        outcome = current.get("outcome", "approved")
         _finish("passed" if task_status == "passed" else task_status)
-        if task_status == "passed":
+        if task_status == "passed" and outcome == "approved":
             await board_state.set_phase(project_path, story_id, "done")
         data["current_run"] = None
         board_state.save_history(project_path, story_id, data)
@@ -246,21 +254,37 @@ async def _reconcile(
         await _advance_phase(project_path, story_id, phase_key, data, now)
 
 
+async def _start_and_track(
+    task_runner: "TaskRunner", project_path: str, story_id: str, phase_key: str,
+    task: Task, iteration: int, data: dict, *, extra_arg: str | None = None,
+    outcome: str | None = None,
+) -> str:
+    """Submit *task*, record it as the story's current_run, and spawn the
+    watcher that will reconcile its result - the common tail shared by every
+    entrypoint that starts a run (run_job, _resubmit, complete_review,
+    resume_pipeline_at). Returns the new task_id."""
+    task_id = await _submit(task_runner, project_path, story_id, phase_key, task, extra_arg)
+    current_run = {
+        "phase": phase_key, "task_key": task.key, "iteration": iteration,
+        "task_id": task_id, "status": "running",
+        "started_at": datetime.now().isoformat(), "finished_at": None,
+    }
+    if outcome is not None:
+        current_run["outcome"] = outcome
+    data["current_run"] = current_run
+    board_state.save_history(project_path, story_id, data)
+    _inflight[story_id] = asyncio.create_task(
+        _watch_and_reconcile(task_runner, project_path, story_id, task_id)
+    )
+    return task_id
+
+
 async def _resubmit(
     task_runner: "TaskRunner", project_path: str, story_id: str, phase: Phase,
     task_key: str, iteration: int, data: dict,
 ) -> None:
     task = next(t for t in phase.tasks if t.key == task_key)
-    task_id = await _submit(task_runner, project_path, story_id, phase.key, task)
-    data["current_run"] = {
-        "phase": phase.key, "task_key": task_key, "iteration": iteration,
-        "task_id": task_id, "status": "running",
-        "started_at": datetime.now().isoformat(), "finished_at": None,
-    }
-    board_state.save_history(project_path, story_id, data)
-    _inflight[story_id] = asyncio.create_task(
-        _watch_and_reconcile(task_runner, project_path, story_id, task_id)
-    )
+    await _start_and_track(task_runner, project_path, story_id, phase.key, task, iteration, data)
 
 
 async def _advance_phase(
@@ -332,23 +356,25 @@ async def run_job(task_runner: "TaskRunner", project_path: str, story_id: str) -
 
     data = board_state.load_history(project_path, story_id)
     task = phase.tasks[0]
-    task_id = await _submit(task_runner, project_path, story_id, phase.key, task)
-    data["current_run"] = {
-        "phase": phase.key, "task_key": task.key, "iteration": 0,
-        "task_id": task_id, "status": "running",
-        "started_at": datetime.now().isoformat(), "finished_at": None,
-    }
-    board_state.save_history(project_path, story_id, data)
-    _inflight[story_id] = asyncio.create_task(
-        _watch_and_reconcile(task_runner, project_path, story_id, task_id)
-    )
-    return task_id
+    return await _start_and_track(task_runner, project_path, story_id, phase.key, task, 0, data)
 
 
-async def complete_review(task_runner: "TaskRunner", project_path: str, story_id: str, mr_url: str) -> str:
-    """The one manual transition: Review -> Done, running rocket-harvest
-    against the MR/PR URL a human supplies after reading its review
-    comments - matching rocket-dag.sh's separate `cmd_harvest`."""
+async def complete_review(
+    task_runner: "TaskRunner", project_path: str, story_id: str, mr_url: str,
+    outcome: str = "approved",
+) -> str:
+    """The Review phase's one job: rocket-harvest against the MR/PR URL a
+    human supplies after reading its review comments (matching
+    rocket-dag.sh's separate `cmd_harvest`).
+
+    *outcome* is "approved" (default - a clean approval, advances to Done
+    once harvest passes) or "changes_requested" (the human asked for
+    changes on the MR; harvest still records every comment and files its
+    usual improvement proposals, but per step 5 of its SKILL.md it also
+    posts a RECOMMENDATION comment, and the story stays in Review either
+    way - see _reconcile's phase_key == "review" branch - for a human to
+    read the recommendation and pick resume_pipeline_at or
+    resume_pipeline_from_start below)."""
     phase_key = await board_state.get_phase(project_path, story_id)
     if phase_key != "review":
         raise BoardError(f"story {story_id} is in phase {phase_key!r}, not 'review'")
@@ -359,17 +385,59 @@ async def complete_review(task_runner: "TaskRunner", project_path: str, story_id
         if current and current.get("task_id"):
             return current["task_id"]
 
-    task_id = await _submit(
-        task_runner, project_path, story_id, "review", REVIEW_COMPLETION_TASK, extra_arg=mr_url,
-    )
     data = board_state.load_history(project_path, story_id)
-    data["current_run"] = {
-        "phase": "review", "task_key": REVIEW_COMPLETION_TASK.key, "iteration": 0,
-        "task_id": task_id, "status": "running",
-        "started_at": datetime.now().isoformat(), "finished_at": None,
-    }
-    board_state.save_history(project_path, story_id, data)
-    _inflight[story_id] = asyncio.create_task(
-        _watch_and_reconcile(task_runner, project_path, story_id, task_id)
+    return await _start_and_track(
+        task_runner, project_path, story_id, "review", REVIEW_COMPLETION_TASK, 0, data,
+        extra_arg=mr_url, outcome=outcome,
     )
-    return task_id
+
+
+async def resume_pipeline_at(
+    task_runner: "TaskRunner", project_path: str, story_id: str, task_key: str,
+) -> str:
+    """Re-enter the pipeline phase partway through, at *task_key* - the
+    deliberate exception to run_job's "always restart at task 0" rule (see
+    phases.py's module docstring). Used for the Review phase's "Loop to
+    Implementation" button: a human read harvest's RECOMMENDATION and
+    decided the requested change is small enough to go straight back into
+    implementation, skipping ideate/plan/confirm_plan/approval_check -
+    those already passed for this story and the request doesn't redefine
+    the plan, so re-running them would be pure overhead, not a safety
+    check. Only reachable from "review" (see resume_pipeline_from_start's
+    docstring for the other branch, re-scope)."""
+    phase_key = await board_state.get_phase(project_path, story_id)
+    if phase_key != "review":
+        raise BoardError(f"story {story_id} is in phase {phase_key!r}, not 'review'")
+    existing = _inflight.get(story_id)
+    if existing is not None and not existing.done():
+        data = board_state.load_history(project_path, story_id)
+        current = data.get("current_run")
+        if current and current.get("task_id"):
+            return current["task_id"]
+
+    pipeline = PHASE_BY_KEY["pipeline"]
+    task = next((t for t in pipeline.tasks if t.key == task_key), None)
+    if task is None:
+        raise BoardError(f"unknown pipeline task {task_key!r}")
+
+    await board_state.set_phase(project_path, story_id, "pipeline")
+    data = board_state.load_history(project_path, story_id)
+    return await _start_and_track(task_runner, project_path, story_id, pipeline.key, task, 0, data)
+
+
+async def resume_pipeline_from_start(
+    task_runner: "TaskRunner", project_path: str, story_id: str,
+) -> str:
+    """Re-enter the pipeline from its very first task - "Loop to Planning":
+    a human read harvest's RECOMMENDATION and decided the requested change
+    redefines the plan (the same re-scope test rocket-confirm-plan's own
+    gate already applies during planning - see its SKILL.md). Just resets
+    the phase label back to "pipeline" and defers to run_job's existing
+    idempotent-restart contract: ideate/plan re-running safely over an
+    epic/story that already has a confirmed WHY/WHAT is exactly the
+    behavior that contract already guarantees, nothing new needed here."""
+    phase_key = await board_state.get_phase(project_path, story_id)
+    if phase_key != "review":
+        raise BoardError(f"story {story_id} is in phase {phase_key!r}, not 'review'")
+    await board_state.set_phase(project_path, story_id, "pipeline")
+    return await run_job(task_runner, project_path, story_id)
