@@ -81,20 +81,21 @@ class TestAutorunAction:
         # human just acted" - it records the baseline and waits.
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {
-            "current_run": None, "history": [{"status": "gate_failed"}],
+            "current_run": None, "history": [{"status": "gate_failed", "task_id": "task-1"}],
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[{"text": "GATE: FAIL still broken"}])):
             result = await board_autorun._autorun_action(str(tmp_path), story)
         assert result is None
         data = board_state.load_history(str(tmp_path), story.id)
+        assert data["autorun_seen_task_id"] == "task-1"
         assert data["autorun_seen_comment_count"] == 1
 
     @pytest.mark.asyncio
     async def test_gate_failed_retries_via_run_job_once_a_new_comment_appears(self, tmp_path):
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {
-            "current_run": None, "history": [{"status": "gate_failed"}],
-            "autorun_seen_comment_count": 1,
+            "current_run": None, "history": [{"status": "gate_failed", "task_id": "task-1"}],
+            "autorun_seen_task_id": "task-1", "autorun_seen_comment_count": 1,
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[
             {"text": "GATE: FAIL still broken"}, {"text": "fixed it, try again"},
@@ -108,8 +109,8 @@ class TestAutorunAction:
     async def test_gate_failed_stays_blocked_with_no_new_comment(self, tmp_path):
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {
-            "current_run": None, "history": [{"status": "gate_failed"}],
-            "autorun_seen_comment_count": 1,
+            "current_run": None, "history": [{"status": "gate_failed", "task_id": "task-1"}],
+            "autorun_seen_task_id": "task-1", "autorun_seen_comment_count": 1,
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[{"text": "GATE: FAIL still broken"}])):
             result = await board_autorun._autorun_action(str(tmp_path), story)
@@ -119,12 +120,38 @@ class TestAutorunAction:
     async def test_plain_failed_status_follows_the_same_comment_rule_as_gate_failed(self, tmp_path):
         story = _story()
         board_state.save_history(str(tmp_path), story.id, {
-            "current_run": None, "history": [{"status": "failed"}],
-            "autorun_seen_comment_count": 0,
+            "current_run": None, "history": [{"status": "failed", "task_id": "task-1"}],
+            "autorun_seen_task_id": "task-1", "autorun_seen_comment_count": 0,
         })
         with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[{"text": "a human left a note"}])):
             result = await board_autorun._autorun_action(str(tmp_path), story)
         assert result == "run_job"
+
+    @pytest.mark.asyncio
+    async def test_a_brand_new_failure_always_waits_even_if_comments_already_grew(self, tmp_path):
+        # Regression, confirmed live: without keying the baseline to the
+        # FAILING RUN's own task_id, a stale baseline left over from an
+        # earlier, already-resolved block eventually read as "a human just
+        # acted" purely because a LATER, unrelated run posted its own
+        # comments (plan's decision log, confirm's own GATE: FAIL post) -
+        # triggering a restart with no human involved, 6 seconds after the
+        # failure, repeating near-instantly and cascading into provider
+        # throttling in production. A brand-new failure (new task_id) must
+        # always wait at least one tick, no matter how high the comment
+        # count already is relative to an old, unrelated baseline.
+        story = _story()
+        board_state.save_history(str(tmp_path), story.id, {
+            "current_run": None, "history": [{"status": "gate_failed", "task_id": "task-2-brand-new"}],
+            "autorun_seen_task_id": "task-1-old", "autorun_seen_comment_count": 1,
+        })
+        with patch.object(board_autorun, "run_bd", AsyncMock(return_value=[
+            {"text": "c1"}, {"text": "c2"}, {"text": "c3"}, {"text": "c4"}, {"text": "c5"},
+        ])):
+            result = await board_autorun._autorun_action(str(tmp_path), story)
+        assert result is None
+        data = board_state.load_history(str(tmp_path), story.id)
+        assert data["autorun_seen_task_id"] == "task-2-brand-new"
+        assert data["autorun_seen_comment_count"] == 5
 
 
 class TestAutorunTick:

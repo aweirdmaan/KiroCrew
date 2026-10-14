@@ -90,7 +90,8 @@ async def _autorun_action(project_path: str, story: StorySummary) -> str | None:
     if not entries:
         return "run_job"  # Labeled but genuinely never run yet.
 
-    last_status = entries[-1].get("status")
+    last_entry = entries[-1]
+    last_status = last_entry.get("status")
     if last_status in _SELF_HEAL_STATUSES:
         return "resume_last_task"
     if last_status not in _BLOCKED_STATUSES:
@@ -98,17 +99,29 @@ async def _autorun_action(project_path: str, story: StorySummary) -> str | None:
 
     comments = await run_bd(project_path, "comments", story.id)
     current_count = len(comments) if isinstance(comments, list) else 0
-    seen = history.get("autorun_seen_comment_count")
-    if seen is None:
-        # First time this module has noticed the block - remember where the
-        # comment count stood and wait for something NEW. Without this, the
-        # very comment that caused the block (e.g. confirm's own
-        # "GATE: FAIL ..." post) would itself read as "a human just acted",
-        # and the pipeline would spin retrying instantly forever.
+    # The baseline is keyed to THIS SPECIFIC failed run (its task_id), not
+    # just to the story - a plain per-story counter that's never cleared is
+    # a real bug, found live: every rocket-* skill posts its OWN comments as
+    # part of normal operation (plan's decision log + OPEN QUESTIONS,
+    # confirm's "GATE: FAIL ..."), so a stale baseline left over from an
+    # EARLIER, already-resolved block eventually reads as "a human just
+    # acted" purely because a LATER, unrelated run posted its own content -
+    # triggering a full restart with no human involved at all, whose own
+    # ideate/plan/confirm_plan posts push the count higher still, repeating
+    # near-instantly. Confirmed in production: a 6-second gap between one
+    # gate_failed and the next full restart, sustained for over an hour,
+    # cascading into provider-side throttling. Keying the baseline to the
+    # failing run's own task_id means a BRAND NEW failure always resets it
+    # fresh and always waits at least one tick before any retry is possible.
+    last_task_id = last_entry.get("task_id")
+    seen_task_id = history.get("autorun_seen_task_id")
+    seen_count = history.get("autorun_seen_comment_count")
+    if seen_task_id != last_task_id:
+        history["autorun_seen_task_id"] = last_task_id
         history["autorun_seen_comment_count"] = current_count
         board_state.save_history(project_path, story.id, history)
         return None
-    if current_count > seen:
+    if seen_count is not None and current_count > seen_count:
         history["autorun_seen_comment_count"] = current_count
         board_state.save_history(project_path, story.id, history)
         return "run_job"
