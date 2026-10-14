@@ -66,7 +66,13 @@ class RunRecord:
 
 
 def load_history(project_path: str, story_id: str) -> dict:
-    """Returns ``{"current_run": dict|None, "history": [dict, ...]}``.
+    """Returns ``{"current_run": dict|None, "history": [dict, ...], ...}``.
+
+    Any OTHER top-level key a caller previously saved (e.g. autorun.py's
+    ``autorun_seen_comment_count``) round-trips through unchanged - this
+    file is a general per-story sidecar, not solely current_run/history's
+    own private format, so a second feature's own small bit of durable
+    state doesn't need a second file.
 
     Missing or unreadable file -> empty defaults, same "degrade, don't raise"
     contract every other beads-adjacent helper in this codebase follows.
@@ -82,6 +88,7 @@ def load_history(project_path: str, story_id: str) -> dict:
     if not isinstance(data, dict):
         return {"current_run": None, "history": []}
     return {
+        **data,
         "current_run": data.get("current_run"),
         "history": data.get("history") if isinstance(data.get("history"), list) else [],
     }

@@ -4376,6 +4376,41 @@ def _register_stt_hooks(app: web.Application) -> None:
     app.on_cleanup.append(_stt_shutdown)
 
 
+def _register_board_autorun_hooks(app: web.Application, state: DashboardState) -> None:
+    """Story Board: advance every story that isn't blocked on a human,
+    without anyone clicking "Run next job" - see board/autorun.py's own
+    module docstring for the generic "a new comment means a human acted"
+    rule this relies on instead of special-casing every gate.
+
+    Same ``on_startup``/``on_cleanup`` shape as ``_register_stt_hooks``
+    (this is a genuine infinite loop, not a one-shot sweep, so it needs the
+    same explicit cancel-and-await at shutdown rather than just the
+    GC-prevention ``state._background_tasks`` set other one-shot
+    registrations here use).
+    """
+
+    async def _project_paths() -> list[str]:
+        cfg = await asyncio.to_thread(KiroCrewConfig.load)
+        return list(cfg.knowledge.beads_project_paths)
+
+    async def _board_autorun_startup(app_: web.Application) -> None:
+        from kiro_crew.board.autorun import autorun_loop
+
+        task = asyncio.create_task(autorun_loop(lambda: state.task_runner, _project_paths))
+        app_["board_autorun"] = task  # prevent GC
+
+    async def _board_autorun_shutdown(app_: web.Application) -> None:
+        task = app_.get("board_autorun")
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    app.on_startup.append(_board_autorun_startup)
+    app.on_cleanup.append(_board_autorun_shutdown)
+
+
 def _register_config_watch(
     app: web.Application, state: DashboardState, initial: KiroCrewConfig | None
 ) -> None:
@@ -5167,6 +5202,7 @@ async def start_dashboard(
     setup_knowledge_routes(app)
     # Story Board (beads-driven workflow pipeline on top of Task Runner)
     setup_board_routes(app)
+    _register_board_autorun_hooks(app, state)
     setup_weixin_routes(app)
     setup_feedback_routes(app)
     setup_secrets_routes(app)

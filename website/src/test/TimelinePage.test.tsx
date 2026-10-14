@@ -260,16 +260,17 @@ describe('TimelinePage', () => {
     await waitFor(() => expect(screen.getByTestId('board-timeline-drawer')).toBeInTheDocument());
   });
 
-  it('clicking "Run next job" calls boardApi.run', async () => {
+  it('never shows a manual "Run next job" trigger - the pipeline advances on its own, in the background', async () => {
+    // Regression: the board used to require a human to click a PlayCircle
+    // button to advance every non-blocked story - now the gateway's own
+    // autorun loop (board/autorun.py) does that without anyone pressing
+    // anything, so this timeline must never render that affordance again.
     vi.mocked(boardApi.phases).mockResolvedValue({ phases: PHASES });
     vi.mocked(boardApi.stories).mockResolvedValue({ stories: [story()], project_paths: ['/proj'] });
-    vi.mocked(boardApi.run).mockResolvedValue({ ok: true, task_id: 'task-1' });
 
     renderWithProviders(<TimelinePage />);
-    await waitFor(() => expect(screen.getByTestId('timeline-run-s-1')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('timeline-run-s-1'));
-
-    await waitFor(() => expect(boardApi.run).toHaveBeenCalledWith('s-1'));
+    await waitFor(() => expect(screen.getByTestId('timeline-row-s-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('timeline-run-s-1')).toBeNull();
   });
 
   it('a Review-phase story shows "Mark reviewed" and collects an MR URL', async () => {
