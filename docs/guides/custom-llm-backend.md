@@ -1,12 +1,19 @@
-# Running the agent on an Anthropic-compatible LLM endpoint
+# Running the agent on a custom LLM endpoint
 
 Kiro Crew's model requests normally follow your kiro-cli account. If you have
-your own endpoint that speaks the Anthropic API — DeepSeek, a self-hosted
-gateway, or another provider's Anthropic-compatible surface — you can point the
-agent at it by selecting the `claude` harness. The harness is
-`claude-agent-acp`, a public npm package that delegates the model turn to the
-Claude Code agent SDK, which honors the standard `ANTHROPIC_*` environment
-variables.
+your own endpoint instead — an internal gateway, DeepSeek, a self-hosted proxy,
+OpenRouter, or another provider's compatible surface — you can point the agent
+at it through the harness whose wire shape matches your endpoint: `claude` for
+an Anthropic-shaped surface (`/v1/messages`), `opencode` for an OpenAI-shaped
+one (`/v1/chat/completions`). Both are covered below.
+
+## Anthropic-shaped endpoints, via `claude`
+
+If your endpoint speaks the Anthropic API — DeepSeek, a self-hosted gateway, or
+another provider's Anthropic-compatible surface — point the agent at it by
+selecting the `claude` harness. The harness is `claude-agent-acp`, a public npm
+package that delegates the model turn to the Claude Code agent SDK, which
+honors the standard `ANTHROPIC_*` environment variables.
 
 With this backend selected, your chat and worker model turns go to **your**
 endpoint with **your** credentials. The dashboard keeps its own token
@@ -25,7 +32,7 @@ machine.
 
 ---
 
-## 1. Select the harness
+### 1. Select the harness
 
 In `~/.kiro/crew/config.json`, under `agent`:
 
@@ -46,7 +53,7 @@ workers (title generation, suggestions, memory consolidation) follow the same
 selection automatically: they run on the provider-backed path for any non-kiro
 harness, so no second setting is needed.
 
-## 2. Install the harness prerequisites
+### 2. Install the harness prerequisites
 
 Both are npm- or CLI-installable; the dashboard's backend status reports which
 one is absent and, when the adapter is the missing half, the command that
@@ -61,7 +68,7 @@ delegates the turn to it and does not search `PATH` itself. If the binary
 resolves for you in a terminal but not for a GUI-launched app (macOS apps get
 a minimal `PATH`), pin it explicitly (see step 3).
 
-## 3. Point the environment at your endpoint
+### 3. Point the environment at your endpoint
 
 The gateway forwards inherited `ANTHROPIC_*` and `CLAUDE_CODE_*` variables to
 the harness child; see the contract in
@@ -165,7 +172,7 @@ How the gateway is launched decides where the variables live:
 The variables reach the harness child on every spawn path, so a gateway
 restart is all that is needed after a change.
 
-## 4. Models
+### 4. Models
 
 The endpoint's own catalog decides what runs. A model advertised by the
 endpoint runs even when it is absent from Kiro Crew's shipped model registry:
@@ -182,7 +189,7 @@ is what the SDK resolves when Kiro Crew does not pin a model.
 - `CLAUDE_CODE_SUBAGENT_MODEL` applies to subagents spawned by the harness
   itself.
 
-## 5. What stays on the Kiro account
+### 5. What stays on the Kiro account
 
 - The kiro-cli sign-in remains for kiro-cli-specific features; dashboard
   authentication uses its own tokens, and messaging channels (Slack, Discord,
@@ -205,3 +212,96 @@ is what the SDK resolves when Kiro Crew does not pin a model.
   settings (including a `.claude/settings.json` inside a cloned project) never
   reach Crew's approval path, so Crew's deny rules and audit log do not see
   them.
+
+## OpenAI-shaped endpoints, via `opencode`
+
+If your endpoint speaks the OpenAI API instead (`/v1/chat/completions`) —
+OpenRouter, an internal LLM gateway, a LiteLLM-style proxy, or a local server
+such as LM Studio or vLLM — point the agent at it by selecting the `opencode`
+harness. Unlike `claude`, the endpoint is not configured through Kiro Crew's
+own config or environment at all: OpenCode owns its provider list itself, in
+its own config file, and Kiro Crew only chooses to run that harness.
+
+### 1. Select the harness
+
+```json
+{
+  "agent": {
+    "acp_backend": "opencode"
+  }
+}
+```
+
+Same mechanism as the `claude` case above: this selects the harness *inside*
+the ACP provider, `agent.provider` stays `"acp"`, and an unrecognized value
+degrades to the kiro harness at config load.
+
+### 2. Install OpenCode
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+`kirocrew doctor` reports whether the `opencode` binary resolves on `PATH`,
+the same way it reports the `claude`/`claude-agent-acp` pair.
+
+### 3. Point OpenCode at your endpoint
+
+This step happens entirely in OpenCode's own config
+(`~/.config/opencode/opencode.json`, or a project-local `opencode.json`) —
+Kiro Crew has no setting for it, because the endpoint is OpenCode's concern,
+not the harness selection's. A custom OpenAI-compatible provider there looks
+like:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "devpass": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Devpass",
+      "options": {
+        "baseURL": "https://your-devpass-endpoint/v1",
+        "apiKey": "{env:DEVPASS_API_KEY}"
+      },
+      "models": {
+        "<model-id>": {
+          "name": "<display name>"
+        }
+      }
+    }
+  }
+}
+```
+
+- `devpass` is the provider id — any string works; it is what shows up in
+  OpenCode's own model picker.
+- `npm: "@ai-sdk/openai-compatible"` is OpenCode's adapter for any endpoint
+  that speaks the OpenAI API shape.
+- `options.apiKey`'s `{env:VAR_NAME}` form reads the key from an environment
+  variable at request time rather than storing it in the file; OpenCode also
+  supports `{file:path}` to read it from a file. Run `curl
+  https://your-devpass-endpoint/v1/models` to list the model ids to put under
+  `models`.
+
+Kiro Crew's own environment still matters here even though it does not read
+these variables itself: harness children are spawned with the gateway's full
+environment plus its own extras (`{**os.environ, **extra_env}` in
+`acp/harness/_common.py`), so `DEVPASS_API_KEY` reaches the spawned `opencode`
+process the same way `ANTHROPIC_AUTH_TOKEN` reaches `claude-agent-acp` above —
+export it before the gateway starts, or via the platform-specific mechanisms
+in step 3 of the Anthropic-shaped section, or [secrets-env.md](secrets-env.md).
+
+### 4. Models
+
+The provider config's `models` map is what OpenCode offers for that provider;
+there is no separate Kiro Crew model registry to keep in sync for a custom
+provider. Run OpenCode's `/models` command (or the dashboard model chip, same
+as any other harness) to confirm the new provider and its models appear
+before relying on it in a session.
+
+### 5. What stays on the Kiro account
+
+The same list as step 5 of the Anthropic-shaped section applies unchanged:
+the kiro-cli sign-in, dashboard authentication, and messaging-channel
+credentials are all independent of which harness is running your agent turns.

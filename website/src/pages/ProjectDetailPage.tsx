@@ -13,10 +13,11 @@ import { api } from '../api/client';
 import { AlertTriangle, Download, Hourglass, Zap } from 'lucide-react';
 import { Badge } from '../components/ui';
 import ErrorNotice from '../components/ErrorNotice';
+import { LiveLogPanel } from '../components/LiveLogPanel';
 
 import { i18nT } from '../i18n/t'
 type Tab = 'idea' | 'tasks';
-type ViewMode = 'dag' | 'phased';
+type ViewMode = 'dag' | 'phased' | 'live';
 
 /** Human text for a caught failure: the `ApiError` / `Error` message, else the value itself. */
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -196,6 +197,15 @@ export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
               <span className="mx-1 text-muted">·</span>
               <button onClick={() => setView('dag')} className={tabCls(view === 'dag')}>{i18nT('pages.projectDetailPage.dag')}</button>
               <button onClick={() => setView('phased')} className={tabCls(view === 'phased')}>{i18nT('pages.projectDetailPage.phased')}</button>
+              {run.status !== 'planning' && run.status !== 'planned' && (
+                // Not gated on 'running': the backend now keeps a replayable
+                // buffer of a run's stream for as long as the run itself
+                // stays around, so a finished run's live log is still worth
+                // opening - it just replays instead of still growing.
+                <button onClick={() => setView('live')} className={tabCls(view === 'live')} data-testid="project-detail-live-tab">
+                  {i18nT('pages.projectDetailPage.live')}
+                </button>
+              )}
             </>
           )}
           <div className="flex-1" />
@@ -278,6 +288,13 @@ export default function ProjectDetailPage({ run, onRetry, onRefresh }: Props) {
             ) : (
               <div className="text-muted text-[13px]">{i18nT('pages.projectDetailPage.no_idea_or_spec_content_available')}</div>
             )
+          ) : view === 'live' ? (
+            // Always active: this branch only renders while view === 'live',
+            // so LiveLogPanel is only ever mounted when it should be
+            // connected - the backend replays a finished run's buffered
+            // history and then closes the stream on its own (an "ended"
+            // frame), there's no reason to gate the connection further here.
+            <LiveLogPanel taskId={run.task_id} active />
           ) : view === 'dag' ? (
             <DagView
               nodes={tasks.map(t => ({ id: String(t.index), title: t.title, status: t.status, task_type: t.task_type, requires_approval: t.requires_approval }))}

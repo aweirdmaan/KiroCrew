@@ -33,6 +33,7 @@ from kiro_crew.executors import run_in_embed_pool
 from kiro_crew.knowledge.agent_fetch import fetch_url_content
 from kiro_crew.knowledge.agent_source import add_agent_document
 from kiro_crew.knowledge.artifact_ingest import ArtifactKnowledgeSync
+from kiro_crew.knowledge.beads_ingest import BeadsKnowledgeSync
 from kiro_crew.knowledge.chunker import HeadingAwareChunker
 from kiro_crew.knowledge.connectors.base import BaseConnector
 from kiro_crew.knowledge.connectors.local_folder import LocalFolderConnector
@@ -292,6 +293,42 @@ async def _stop_artifact_ingest(app: web.Application) -> None:
         logger.warning("artifact auto-ingest: listener detach failed", exc_info=True)
 
 
+async def _start_beads_sync_async(app: web.Application, cfg: KiroCrewConfig | None = None) -> None:
+    """Wire ``bd`` (beads) issue-tracker -> Knowledge Library sync when at
+    least one project path is configured.
+
+    Unlike artifacts, there is no in-process write hook to listen on -- ``bd``
+    is an external CLI over a git-backed store -- so this starts a periodic
+    poller (:class:`BeadsKnowledgeSync`) instead of registering a listener.
+    Gated on ``knowledge.beads_project_paths`` being non-empty (empty by
+    default). See ``kiro_crew.knowledge.beads_ingest`` for the full design.
+    """
+    if cfg is None:
+        cfg = await asyncio.to_thread(KiroCrewConfig.load)
+    if not cfg.knowledge.beads_project_paths:
+        return
+    pipeline = app["knowledge_pipeline"]
+    store = app["state"].knowledge_store
+    sync = BeadsKnowledgeSync(
+        store=store,
+        pipeline=pipeline,
+        project_paths=cfg.knowledge.beads_project_paths,
+        interval=cfg.knowledge.beads_sync_interval_secs,
+    )
+    app["beads_knowledge_sync"] = sync
+    app["_beads_knowledge_sync_task"] = asyncio.create_task(sync.start())
+
+
+async def _stop_beads_sync(app: web.Application) -> None:
+    sync = app.pop("beads_knowledge_sync", None)
+    if sync is None:
+        return
+    await sync.stop()
+    task = app.pop("_beads_knowledge_sync_task", None)
+    if task is not None:
+        task.cancel()
+
+
 async def _apply_knowledge_config(app: web.Application, change: object) -> None:
     """Apply a live ``knowledge.*`` change to the running ingest stack.
 
@@ -306,6 +343,11 @@ async def _apply_knowledge_config(app: web.Application, change: object) -> None:
       so the toggle takes effect on the next artifact write.
     * ``auto_ingest_artifact_kinds`` -- replace the kinds set on the live sync
       object, which is the only thing the change gates.
+    * ``beads_project_paths`` -- start or stop the beads poller. A path LIST
+      added to is handled by a full restart of the poller (stop then start)
+      rather than mutating the running one's ``project_paths`` in place,
+      since the simpler restart costs nothing beyond re-reading each already-
+      synced project's state from its source row on the next poll.
     """
     new = getattr(change, "new")
     touched = getattr(change, "touched")
@@ -327,6 +369,12 @@ async def _apply_knowledge_config(app: web.Application, change: object) -> None:
                 await _stop_artifact_ingest(app)
         except Exception:
             logger.warning("knowledge artifact auto-ingest rewire failed", exc_info=True)
+    if touched("knowledge.beads_project_paths", "knowledge.beads_sync_interval_secs"):
+        try:
+            await _stop_beads_sync(app)
+            await _start_beads_sync_async(app, new)
+        except Exception:
+            logger.warning("knowledge beads sync rewire failed", exc_info=True)
     if touched("knowledge.auto_ingest_artifact_kinds"):
         sync = app.get("artifact_knowledge_sync")
         if sync is not None:
@@ -2962,8 +3010,10 @@ def setup_knowledge_routes(app: web.Application) -> None:
         app.on_startup.append(_start_watcher_async)
         # Start artifact ingest watcher (no-op unless auto-ingest is enabled)
         app.on_startup.append(_start_artifact_ingest_async)
+        # Start beads sync poller (no-op unless a project path is configured)
+        app.on_startup.append(_start_beads_sync_async)
         # Follow knowledge.* live: embedder tuning, artifact auto-ingest on/off,
-        # and the eligible artifact kinds.
+        # the eligible artifact kinds, and beads project paths/interval.
         app.on_startup.append(_watch_knowledge_config)
 
     app.router.add_get("/api/knowledge/config", get_config)
@@ -3015,3 +3065,4 @@ def setup_knowledge_routes(app: web.Application) -> None:
             task.cancel()
 
     app.on_cleanup.append(_stop_watcher)
+    app.on_cleanup.append(_stop_beads_sync)

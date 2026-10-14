@@ -516,6 +516,21 @@ class TestParentRuntimeKwargs:
         _register(mgr, "d1", provider=provider)
         assert mgr._parent_runtime_kwargs("d1") == {"sandbox_mode": "off"}
 
+    def test_a_cold_run_with_no_parent_falls_back_to_the_configured_backend(self, cfg) -> None:
+        """A parentless run (task_run, cron, MCP, the REST API) has no client
+        posture to mirror, but the shared runtime it may bootstrap still needs a
+        backend. Without this fallback it silently defaults to AcpRuntime's own
+        ACP_BACKEND_KIRO default regardless of what the operator configured -
+        the second half of kirodotdev/KiroCrew#13872."""
+        cfg.agent.acp_backend = ACP_BACKEND_CLAUDE
+        mgr = SessionManager(cfg)
+        assert mgr._parent_runtime_kwargs("nope") == {"acp_backend": ACP_BACKEND_CLAUDE}
+
+    def test_a_cold_run_with_the_default_backend_still_yields_no_kwargs(self, mgr) -> None:
+        """The default config's acp_backend is the falsy empty string (kiro);
+        the fallback must not turn that into a spurious acp_backend='' kwarg."""
+        assert mgr._parent_runtime_kwargs("nope") == {}
+
 
 class TestSessionSharingEligible:
     def test_unknown_parent_is_ineligible(self, mgr) -> None:

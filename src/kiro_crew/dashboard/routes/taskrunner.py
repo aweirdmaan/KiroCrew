@@ -31,6 +31,7 @@ def register(app: web.Application) -> None:
     app.router.add_get(
         "/api/taskrunner/{task_id}/plan-context", handlers.api_taskrunner_plan_context
     )
+    app.router.add_get("/api/taskrunner/{task_id}/stream", handlers.api_taskrunner_stream)
     app.router.add_get("/api/taskrunner/{task_id}/plan.yaml", handlers.api_taskrunner_export_yaml)
     app.router.add_put("/api/taskrunner/{task_id}/plan", handlers.api_taskrunner_update_plan)
     app.router.add_post("/api/taskrunner/{task_id}/execute", handlers.api_taskrunner_execute_plan)

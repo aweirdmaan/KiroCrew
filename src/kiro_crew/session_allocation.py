@@ -218,6 +218,10 @@ class _AllocationOwner(Protocol):
         self, parent_session_key: str, session_key: str, **kwargs: Any
     ) -> Any: ...
 
+    def _bg_backend_supports_runtime(self) -> bool: ...
+
+    def _configured_bg_backend_raw(self) -> str | None: ...
+
     def _get_session_agent(self, session_key: str) -> str: ...
 
     def _parent_runtime_kwargs(self, parent_session_key: str) -> dict[str, Any]: ...
@@ -252,12 +256,18 @@ def _collect_parent_runtime_kwargs(
     parent_session_key: str,
 ) -> dict[str, Any]:
     """Mirror the parent client's sandbox, gateway, env, and backend posture."""
+    # A cold run (no parent session -- task_run, cron, MCP, the REST API) has
+    # no client posture to mirror, but the shared runtime it bootstraps still
+    # needs a backend: falling back to the configured agent.acp_backend here
+    # is what keeps that runtime honoring the operator's choice instead of
+    # silently defaulting to AcpRuntime's own ACP_BACKEND_KIRO default.
+    fallback_backend = owner._configured_bg_backend_raw()
     provider = owner.get_provider(parent_session_key)
     if provider is None:
-        return {}
+        return {"acp_backend": fallback_backend} if fallback_backend else {}
     client = getattr(provider, "client", None) or getattr(provider, "_client", None)
     if client is None:
-        return {}
+        return {"acp_backend": fallback_backend} if fallback_backend else {}
     kwargs: dict[str, Any] = {}
     for attribute, key in (
         ("_sandbox_mode", "sandbox_mode"),
@@ -804,6 +814,17 @@ class SessionAllocationService:
 
         prepared = await asyncio.to_thread(prepare_runtime, agent, None, cwd)
         if prepared.revision:
+            return await owner.get_or_create(
+                key, agent=agent, approval_policy=approval_policy, cwd=cwd
+            )
+        if not owner._bg_backend_supports_runtime():
+            # The configured harness (e.g. claude) is not a member of
+            # ACP_BACKENDS_ACP_RUNTIME, so it has no shared run-scoped runtime
+            # to bootstrap. Bootstrapping one anyway spawns the kiro-family
+            # runtime under a foreign label (kiro-cli not found on a
+            # claude-only install). Route through the same dedicated
+            # per-session path get_bg_session() already uses for these
+            # backends -- the positive membership test, not "not kiro".
             return await owner.get_or_create(
                 key, agent=agent, approval_policy=approval_policy, cwd=cwd
             )

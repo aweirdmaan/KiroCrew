@@ -3,7 +3,16 @@ import { Wrench, Shield, Hourglass, Pause, SkipForward, Square, Check, X, Lock }
 
 import { i18nT } from '../../i18n/t'
 interface DagNode { id: string; title: string; status: string; task_type?: string; requires_approval?: boolean }
-interface DagEdge { from: string; to: string }
+// `style: 'loop'` + `label` are for a board story's post-review loop-back
+// (see apps/board/StoryModal.tsx): drawn as a distinct dashed/amber path
+// with its own caption, NOT a real dependency edge back into an
+// already-laid-out node - that would create a genuine cycle and break the
+// Kahn's-algorithm layering below (a node fed only by a "later" node would
+// never reach indegree 0 and silently vanish from the graph). Every
+// `style: 'loop'` edge in practice points at its own virtual leaf node, not
+// at an upstream one, so the DAG stays acyclic even while depicting "and
+// then, optionally, back to X".
+interface DagEdge { from: string; to: string; style?: 'loop'; label?: string }
 
 const STATUS_FILL: Record<string, string> = {
   pending: 'var(--muted)', in_progress: 'var(--accent)', reviewing: 'var(--accent)', passed: 'var(--ok)', failed: 'var(--danger)', skipped: 'var(--muted)', cancelled: 'var(--muted)', cancelling: 'var(--accent)', paused: 'var(--info)', pausing: 'var(--accent)', blocked: 'var(--warn)', gated: 'var(--muted)',
@@ -71,10 +80,21 @@ function effectiveStatusOf(n: DagNode, approvalMap?: Record<number, string>): st
   return n.status
 }
 
-export default function DagView({ nodes, edges, onNodeClick, selectedId, pendingEditIds, approvalMap, onApprove }: {
+export default function DagView({ nodes, edges, onNodeClick, selectedId, pendingEditIds, approvalMap, onApprove, loopAnnotations }: {
   nodes: DagNode[]; edges: DagEdge[]; onNodeClick: (id: string) => void
   selectedId?: string; pendingEditIds?: Set<string>
   approvalMap?: Record<number, string>; onApprove?: (index: number, decision: 'approve' | 'reject') => void
+  // A GENUINE back-edge onto an already-laid-out node (e.g. "confirm loops
+  // back to verify on a failed gate" - see apps/board/StoryModal.tsx).
+  // Deliberately a separate prop from `edges`, never merged into it: these
+  // are drawn from the positions the acyclic layout above already computed,
+  // entirely outside the indegree/layering algorithm, because feeding a
+  // real cycle into that algorithm orphans every node downstream of it
+  // (its indegree never reaches zero, so it's silently dropped from every
+  // layer - confirmed the hard way, not a hypothetical). This is how a
+  // real cycle gets drawn at all: as an annotation on top of an otherwise-
+  // acyclic diagram, never as a laid-out edge.
+  loopAnnotations?: { from: string; to: string; label?: string }[]
 }) {
   const layout = useMemo(() => {
     if (!nodes.length) return { positioned: [], width: 0, height: 0 }
@@ -111,13 +131,18 @@ export default function DagView({ nodes, edges, onNodeClick, selectedId, pending
     <div className="text-[13px] text-center py-8" style={{ color: 'var(--muted)' }}>{i18nT('pages.aidlc.dagView.no_tasks_to_visualize')}</div>
   )
 
+  // How far right of the node column a loop annotation's curve bulges, plus
+  // room for its label - only reserved when there's actually one to draw.
+  const LOOP_BULGE = 56
+  const svgWidth = layout.width + (loopAnnotations?.length ? LOOP_BULGE + 70 : 0)
+
   return (
     <div className="min-w-0">
       {/* Viewport-adaptive cap: grow with the window (leaving ~320px for the page
           header, tab bar and legend) but never below the 480px the view always had,
           so short windows keep today's behavior while tall ones show more layers. */}
       <div className="overflow-auto rounded-lg" style={{ maxHeight: 'max(480px, calc(100vh - 320px))', border: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
-        <svg width={layout.width} height={layout.height}>
+        <svg width={svgWidth} height={layout.height}>
         <defs>
           <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
             <polygon points="0 0, 10 3.5, 0 7" fill="var(--muted)" />
@@ -138,13 +163,48 @@ export default function DagView({ nodes, edges, onNodeClick, selectedId, pending
           const cy1 = y1 + (y2 - y1) * 0.4, cy2 = y1 + (y2 - y1) * 0.6
           const d = `M${x1},${y1} C${x1},${cy1} ${x2},${cy2} ${x2},${y2}`
           const toActive = to.status === 'in_progress' || to.status === 'reviewing'
+          const isLoop = e.style === 'loop'
           return <g key={i}>
-            <path d={d} fill="none" stroke={STATUS_FILL[from.status] || 'var(--muted)'} strokeWidth={1.5} strokeDasharray="4 3" markerEnd="url(#arrow)" opacity={0.5} />
+            <path
+              d={d} fill="none"
+              stroke={isLoop ? 'var(--warn)' : (STATUS_FILL[from.status] || 'var(--muted)')}
+              strokeWidth={1.5} strokeDasharray={isLoop ? '2 3' : '4 3'}
+              markerEnd="url(#arrow)" opacity={isLoop ? 0.65 : 0.5}
+            />
+            {isLoop && e.label && (
+              <text x={(x1 + x2) / 2 + 6} y={(y1 + y2) / 2} fontSize={9} fill="var(--warn)" fontWeight={600}>
+                {e.label}
+              </text>
+            )}
             {toActive && <>
               <circle r={3} fill="var(--accent)"><animateMotion dur="1.5s" repeatCount="indefinite" path={d}/></circle>
               <circle r={3} fill="var(--accent)" opacity={0.4}><animateMotion dur="1.5s" begin="0.5s" repeatCount="indefinite" path={d}/></circle>
             </>}
           </g>
+        })}
+        {loopAnnotations?.map((a, i) => {
+          const from = layout.positioned.find(n => n.id === a.from)
+          const to = layout.positioned.find(n => n.id === a.to)
+          if (!from || !to) return null
+          // Exits the right edge of `from`, bulges out to the right of the
+          // whole node column, re-enters the right edge of `to` - a loop
+          // back UP the page, which a straight/curved top-to-bottom path
+          // (like the normal edges above) cannot express without crossing
+          // through every node in between.
+          const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2
+          const x2 = to.x + NODE_W, y2 = to.y + NODE_H / 2
+          const bulgeX = Math.max(x1, x2) + LOOP_BULGE
+          const d = `M${x1},${y1} C${bulgeX},${y1} ${bulgeX},${y2} ${x2},${y2}`
+          return (
+            <g key={`loop-${i}`}>
+              <path d={d} fill="none" stroke="var(--warn)" strokeWidth={1.5} strokeDasharray="2 3" markerEnd="url(#arrow)" opacity={0.75} />
+              {a.label && (
+                <text x={bulgeX + 6} y={(y1 + y2) / 2} fontSize={9} fill="var(--warn)" fontWeight={600}>
+                  {a.label}
+                </text>
+              )}
+            </g>
+          )
         })}
         {layout.positioned.map(n => {
           const ts = TYPE_STYLE[n.task_type || '']

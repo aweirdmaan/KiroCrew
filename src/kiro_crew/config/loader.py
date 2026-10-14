@@ -3140,6 +3140,14 @@ def _build_knowledge_config(knowledge_data: dict) -> KnowledgeConfig:
                 _safe_nonnegative_int(knowledge_data.get("extraction_pool_size", 3), 3),
             ),
         ),
+        beads_project_paths=[
+            str(p)
+            for p in knowledge_data.get("beads_project_paths", [])
+            if isinstance(p, str) and p.strip()
+        ],
+        beads_sync_interval_secs=_safe_nonnegative_int(
+            knowledge_data.get("beads_sync_interval_secs", 300), 300
+        ),
     )
 
 
