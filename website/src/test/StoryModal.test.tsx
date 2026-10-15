@@ -412,19 +412,44 @@ describe('StoryModal', () => {
     await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { title: 'Renamed story' }));
   });
 
-  it('edits the description and saves it via updateStory', async () => {
-    vi.mocked(boardApi.detail).mockResolvedValue(detail());
+  it('edits the spec as separate WHY/WHAT fields, parsed from the existing description, and recombines them on save', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({
+      description: 'WHY: the original reason\n\nWHAT (acceptance criteria):\n1. the original criterion',
+    }));
     vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
     vi.mocked(boardApi.updateStory).mockResolvedValue({ ok: true });
 
     renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
 
-    await waitFor(() => expect(screen.getByTestId('board-description-edit-start')).toBeInTheDocument());
+    // Wait for the real detail payload to actually land before editing -
+    // the edit button renders unconditionally, before detail resolves.
+    await waitFor(() => expect(screen.getByTestId('board-description')).toHaveTextContent('the original reason'));
     fireEvent.click(screen.getByTestId('board-description-edit-start'));
-    fireEvent.change(screen.getByTestId('board-description-input'), { target: { value: 'Updated description' } });
+    // Parsed out of the existing description into two separate boxes, not
+    // one blob.
+    expect(screen.getByTestId('board-spec-why-input')).toHaveValue('the original reason');
+    expect(screen.getByTestId('board-spec-what-input')).toHaveValue('1. the original criterion');
+
+    fireEvent.change(screen.getByTestId('board-spec-why-input'), { target: { value: 'an updated reason' } });
+    fireEvent.change(screen.getByTestId('board-spec-what-input'), { target: { value: '1. an updated criterion' } });
     fireEvent.click(screen.getByTestId('board-description-save'));
 
-    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', { description: 'Updated description' }));
+    await waitFor(() => expect(boardApi.updateStory).toHaveBeenCalledWith('s-1', {
+      description: 'WHY: an updated reason\n\nWHAT (acceptance criteria):\n1. an updated criterion',
+    }));
+  });
+
+  it('falls back to putting everything in WHY when the description has no recognizable WHAT section', async () => {
+    vi.mocked(boardApi.detail).mockResolvedValue(detail({ description: '**bold** description' }));
+    vi.mocked(boardApi.history).mockResolvedValue({ current_run: null, history: [] });
+
+    renderWithProviders(<StoryModal story={story()} phases={PHASES} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('board-description')).toHaveTextContent('bold description'));
+    fireEvent.click(screen.getByTestId('board-description-edit-start'));
+
+    expect(screen.getByTestId('board-spec-why-input')).toHaveValue('**bold** description');
+    expect(screen.getByTestId('board-spec-what-input')).toHaveValue('');
   });
 
   it('"edits" a comment by posting a correction comment, leaving the original in place', async () => {

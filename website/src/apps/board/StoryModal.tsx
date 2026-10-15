@@ -19,6 +19,7 @@ import PhasedView from '../../pages/aidlc/PhasedView'
 import type { TaskDetail } from '../../types'
 import { boardApi, type BoardStory, type RunRecord, type PhaseDef, type BeadsComment, type StoryDetail } from './boardApi'
 import { findPendingOpenQuestions, formatAnswers, type ParsedQuestion } from './openQuestions'
+import { parseSpec, composeSpec } from './specFields'
 import { needsHuman, NEEDS_HUMAN_LABEL_KEY } from './needsHuman'
 import { epicAccent } from './epicColor'
 import { i18nT } from '../../i18n/t'
@@ -649,7 +650,8 @@ export default function StoryModal({ story, phases, onClose }: {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [editingDescription, setEditingDescription] = useState(false)
-  const [descriptionDraft, setDescriptionDraft] = useState('')
+  const [whyDraft, setWhyDraft] = useState('')
+  const [whatDraft, setWhatDraft] = useState('')
 
   const updateMutation = useMutation({
     mutationFn: (fields: Parameters<typeof boardApi.updateStory>[1]) => boardApi.updateStory(story.id, fields),
@@ -732,7 +734,12 @@ export default function StoryModal({ story, phases, onClose }: {
               {!editingDescription && (
                 <button
                   type="button"
-                  onClick={() => { setDescriptionDraft(detail?.description ?? ''); setEditingDescription(true) }}
+                  onClick={() => {
+                    const parsed = parseSpec(detail?.description ?? '')
+                    setWhyDraft(parsed.why)
+                    setWhatDraft(parsed.what)
+                    setEditingDescription(true)
+                  }}
                   className="text-muted hover:text-text cursor-pointer opacity-60 hover:opacity-100"
                   data-testid="board-description-edit-start"
                 >
@@ -741,15 +748,28 @@ export default function StoryModal({ story, phases, onClose }: {
               )}
             </div>
             {editingDescription ? (
-              <div className="flex flex-col gap-2" data-testid="board-description-edit">
-                <textarea
-                  value={descriptionDraft}
-                  onChange={e => setDescriptionDraft(e.target.value)}
-                  rows={8}
-                  className="w-full px-3 py-2 text-[13px] font-mono rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent resize-y"
-                  data-testid="board-description-input"
-                  autoFocus
-                />
+              <div className="flex flex-col gap-3" data-testid="board-description-edit">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-medium text-muted">{i18nT('apps.board.spec_why_label')}</label>
+                  <textarea
+                    value={whyDraft}
+                    onChange={e => setWhyDraft(e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 text-[13px] font-mono rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent resize-y"
+                    data-testid="board-spec-why-input"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-medium text-muted">{i18nT('apps.board.spec_what_label')}</label>
+                  <textarea
+                    value={whatDraft}
+                    onChange={e => setWhatDraft(e.target.value)}
+                    rows={6}
+                    className="w-full px-3 py-2 text-[13px] font-mono rounded-md border border-border bg-bg text-text focus:outline-none focus:ring-1 focus:ring-accent resize-y"
+                    data-testid="board-spec-what-input"
+                  />
+                </div>
                 <div className="flex items-center gap-2 self-end">
                   <button type="button" onClick={() => setEditingDescription(false)} className="text-[12px] text-muted hover:text-text cursor-pointer px-2 py-1">
                     {i18nT('apps.board.edit_cancel')}
@@ -757,7 +777,10 @@ export default function StoryModal({ story, phases, onClose }: {
                   <button
                     type="button"
                     disabled={updateMutation.isPending}
-                    onClick={() => updateMutation.mutate({ description: descriptionDraft }, { onSuccess: () => setEditingDescription(false) })}
+                    onClick={() => updateMutation.mutate(
+                      { description: composeSpec({ why: whyDraft, what: whatDraft }) },
+                      { onSuccess: () => setEditingDescription(false) },
+                    )}
                     className="flex items-center gap-1 text-[12px] py-1 px-3 rounded-md bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50 cursor-pointer"
                     data-testid="board-description-save"
                   >

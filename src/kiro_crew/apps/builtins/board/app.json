@@ -2,7 +2,7 @@
   "name": "board",
   "version": "0.1.0",
   "displayName": "Timeline",
-  "description": "Schedules beads stories on a Jira-style timeline, each with its own single-DAG pipeline (ideate through retro) that pauses for a human wherever a gate needs one - answer OPEN QUESTIONS, approve, or fix a break - and resumes correctly once they act. Configure projects via knowledge.beads_project_paths.",
+  "description": "Schedules beads specs on a Jira-style timeline, each with its own single-DAG pipeline (ideate through retro) that pauses for a human wherever a gate needs one - answer OPEN QUESTIONS, approve, or fix a break - and resumes correctly once they act. Configure projects via knowledge.beads_project_paths.",
   "author": "kirocrew",
   "license": "MIT",
   "tags": [
@@ -29,7 +29,7 @@
     ]
   },
   "useCases": [
-    "Schedule and reorder beads stories on a timeline, by week or by quarter, without leaving the dashboard.",
-    "Run a story's whole pipeline - ideate through retro - as one DAG, and see at a glance which stories need you (an answer, an approval, a fix) and which are just running."
+    "Schedule and reorder beads specs on a timeline, by week or by quarter, without leaving the dashboard.",
+    "Run a spec's whole pipeline - ideate through retro - as one DAG, and see at a glance which specs need you (an answer, an approval, a fix) and which are just running."
   ]
 }
