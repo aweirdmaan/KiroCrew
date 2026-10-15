@@ -4376,6 +4376,18 @@ def _register_stt_hooks(app: web.Application) -> None:
     app.on_cleanup.append(_stt_shutdown)
 
 
+# Manually disabled (2026-10-14): a bug in the "wait for a human comment
+# before retrying a blocked story" baseline caused an unattended restart
+# storm that ran for over 90 minutes and cascaded into provider-side
+# (Bedrock) throttling - real, billable, fully automatic activity with no
+# human involved. The root cause is fixed (autorun.py: the baseline is now
+# keyed to the failing run's own task_id, with a regression test), but the
+# operator asked to keep autorun OFF for now rather than trust it back on
+# immediately. Flip this back to True once they're ready to re-enable it -
+# nothing else needs to change.
+_BOARD_AUTORUN_ENABLED = False
+
+
 def _register_board_autorun_hooks(app: web.Application, state: DashboardState) -> None:
     """Story Board: advance every story that isn't blocked on a human,
     without anyone clicking "Run next job" - see board/autorun.py's own
@@ -4386,8 +4398,11 @@ def _register_board_autorun_hooks(app: web.Application, state: DashboardState) -
     (this is a genuine infinite loop, not a one-shot sweep, so it needs the
     same explicit cancel-and-await at shutdown rather than just the
     GC-prevention ``state._background_tasks`` set other one-shot
-    registrations here use).
+    registrations here use). See _BOARD_AUTORUN_ENABLED above for why this
+    is currently a no-op.
     """
+    if not _BOARD_AUTORUN_ENABLED:
+        return
 
     async def _project_paths() -> list[str]:
         cfg = await asyncio.to_thread(KiroCrewConfig.load)
