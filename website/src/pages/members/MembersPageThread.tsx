@@ -462,7 +462,11 @@ export function useMembersPageThreadView({
     // the next tick.
   }, [pillResting, pillLastActive, uiLang])
   const pillActivity = useMemo(() => {
-    const label = pillAct.text !== undefined
+    // `text` ultimately traces back to an LLM-generated tool label: a malformed
+    // one can arrive as a nested object instead of a string, and rendering that
+    // raw as a child throws minified React #31 (see `CrewmateLiveActivity.tsx`'s
+    // same guard).
+    const label = typeof pillAct.text === 'string' && pillAct.text
       ? pillAct.text
       : pillAct.kind === 'idle' && pillIdleAge
         ? t('pages.membersPage.pill_idle_since', { when: pillIdleAge })

@@ -126,6 +126,17 @@ export const APP_MANIFEST_KEY: Record<string, ManifestKeys> = {
     useCases: ['apps.awsControl.manifest.use_case_1'],
     configuration: ['apps.awsControl.manifest.configuration_1'],
   },
+  'board': {
+    displayName: 'apps.board.manifest.display_name',
+    description: 'apps.board.manifest.description',
+    pageLabel: 'apps.board.manifest.page_label',
+    highlights: [],
+    useCases: [
+      'apps.board.manifest.use_case_1',
+      'apps.board.manifest.use_case_2',
+    ],
+    configuration: [],
+  },
   'code-review-sage': {
     displayName: 'apps.codeReviewSage.manifest.display_name',
     description: 'apps.codeReviewSage.manifest.description',

@@ -4378,6 +4378,15 @@
         "drive_bucket_label": "Bucket",
         "stat_spend_scope": "This account's AWS bill"
       }
+    },
+    "board": {
+      "manifest": {
+        "display_name": "Timeline",
+        "description": "Schedules beads specs on a Jira-style timeline, each with its own single-DAG pipeline (ideate through retro) that pauses for a human wherever a gate needs one - answer OPEN QUESTIONS, approve, or fix a break - and resumes correctly once they act. Configure project paths via PUT /api/apps/board/config {\"project_paths\": [...]}.",
+        "page_label": "Timeline",
+        "use_case_1": "Schedule and reorder beads specs on a timeline, by week or by quarter, without leaving the dashboard.",
+        "use_case_2": "Run a spec's whole pipeline - ideate through retro - as one DAG, and see at a glance which specs need you (an answer, an approval, a fix) and which are just running."
+      }
     }
   },
   "components": {

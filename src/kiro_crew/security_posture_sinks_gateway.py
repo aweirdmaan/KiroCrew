@@ -1040,4 +1040,13 @@ _GATEWAY_SINKS: tuple[tuple[str, str, str], ...] = (
         "because an operator can paste a token into the list. The login words "
         "beside them are fixed constants.",
     ),
+    (
+        "Board story detail",
+        "board/detail.py",
+        "A beads issue's description and every comment, on their way to the "
+        "Timeline app's story detail modal. A pasted secret or exfiltration URL "
+        "in an incident-discussion comment is redacted before it reaches the "
+        "browser, the same way the Knowledge Library's beads sync redacts "
+        "ingested issue content.",
+    ),
 )
