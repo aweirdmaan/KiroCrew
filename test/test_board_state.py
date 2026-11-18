@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from kiro_crew.board import state as board_state
+from kiro_crew.board.tracker import beads_client
 
 
 def _row(story_id: str, labels: list[str] | None = None) -> dict:
@@ -19,20 +20,20 @@ def _row(story_id: str, labels: list[str] | None = None) -> dict:
 class TestGetSetPhase:
     @pytest.mark.asyncio
     async def test_no_labels_is_backlog(self):
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=_row("s-1"))):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=_row("s-1"))):
             phase = await board_state.get_phase("/proj", "s-1")
         assert phase is None
 
     @pytest.mark.asyncio
     async def test_reads_phase_label(self):
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=_row("s-1", ["phase:planning"]))):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=_row("s-1", ["phase:planning"]))):
             phase = await board_state.get_phase("/proj", "s-1")
         assert phase == "planning"
 
     @pytest.mark.asyncio
     async def test_ignores_non_phase_labels(self):
         rows = _row("s-1", ["priority:high", "phase:verification", "team:x"])
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=rows)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
             phase = await board_state.get_phase("/proj", "s-1")
         assert phase == "verification"
 
@@ -46,7 +47,7 @@ class TestGetSetPhase:
                 return _row("s-1", ["phase:planning"])
             return [{"status": "ok"}]
 
-        with patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             ok = await board_state.set_phase("/proj", "s-1", "plan_review")
 
         assert ok is True
@@ -63,7 +64,7 @@ class TestGetSetPhase:
                 return _row("s-1")
             return [{"status": "ok"}]
 
-        with patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             await board_state.set_phase("/proj", "s-1", "grooming")
 
         assert not any(c[0] == "label" and c[1] == "remove" for c in calls)
@@ -76,7 +77,7 @@ class TestGetSetPhase:
                 return _row("s-1")
             return None  # label add failed
 
-        with patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             ok = await board_state.set_phase("/proj", "s-1", "grooming")
         assert ok is False
 
@@ -84,7 +85,7 @@ class TestGetSetPhase:
 class TestGateComment:
     @pytest.mark.asyncio
     async def test_no_comments_is_none(self):
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=[])):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=[])):
             result = await board_state.last_gate_comment("/proj", "s-1")
         assert result is None
 
@@ -96,14 +97,14 @@ class TestGateComment:
             {"text": "answered the questions"},
             {"text": "GATE: PASS looks good"},
         ]
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=comments)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=comments)):
             result = await board_state.last_gate_comment("/proj", "s-1")
         assert result == "GATE: PASS looks good"
 
     @pytest.mark.asyncio
     async def test_multiline_comment_gate_line_not_required_at_start(self):
         comments = [{"text": "some preamble\nGATE: PASS embedded\nmore text"}]
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=comments)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=comments)):
             result = await board_state.last_gate_comment("/proj", "s-1")
         assert result == "GATE: PASS embedded"
 
@@ -111,7 +112,7 @@ class TestGateComment:
 class TestRecommendationComment:
     @pytest.mark.asyncio
     async def test_no_comments_is_none(self):
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=[])):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=[])):
             result = await board_state.last_recommendation_comment("/proj", "s-1")
         assert result is None
 
@@ -123,7 +124,7 @@ class TestRecommendationComment:
             {"text": "a later comment"},
             {"text": "RECOMMENDATION: QUICK_FIX tweak the validator"},
         ]
-        with patch.object(board_state, "run_bd", AsyncMock(return_value=comments)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=comments)):
             result = await board_state.last_recommendation_comment("/proj", "s-1")
         assert result == "RECOMMENDATION: QUICK_FIX tweak the validator"
 

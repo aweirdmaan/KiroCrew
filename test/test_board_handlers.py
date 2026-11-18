@@ -12,6 +12,7 @@ from aiohttp.test_utils import make_mocked_request
 from kiro_crew.apps.builtins.board.backend import routes as board_handlers
 from kiro_crew.board import engine as board_engine
 from kiro_crew.board.stories import StorySummary
+from kiro_crew.board.tracker import beads_client
 
 
 def _request(method: str, path: str, *, match_info: dict | None = None):
@@ -53,7 +54,7 @@ class TestFindStoryProject:
             return [{"id": "s-1"}] if project_path == "/proj-b" else []
 
         with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj-a", "/proj-b"])), \
-             patch.object(board_handlers, "run_bd", side_effect=fake_run_bd), \
+             patch.object(beads_client, "run_bd", side_effect=fake_run_bd), \
              patch.object(board_handlers, "list_stories", AsyncMock(side_effect=AssertionError("must not be called"))):
             found = await board_handlers._find_story_project("s-1")
         assert found == "/proj-b"
@@ -61,7 +62,7 @@ class TestFindStoryProject:
     @pytest.mark.asyncio
     async def test_no_project_has_the_story_returns_none(self):
         with patch.object(board_handlers, "_project_paths", AsyncMock(return_value=["/proj-a"])), \
-             patch.object(board_handlers, "run_bd", AsyncMock(return_value=[])):
+             patch.object(beads_client, "run_bd", AsyncMock(return_value=[])):
             found = await board_handlers._find_story_project("s-missing")
         assert found is None
 

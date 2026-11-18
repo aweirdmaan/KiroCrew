@@ -1,12 +1,21 @@
-"""Durable state for a board story: its current phase (a beads label) and its
-job-run history (a small sidecar JSON file).
+"""Durable state for a board story: its current phase (tracker-owned, e.g. a
+beads `phase:<key>` label) and its job-run history (a small sidecar JSON
+file).
 
-Beads remains the source of truth for phase, by design: ``phase:<key>`` is a
-plain beads label, readable with ``bd list --label phase:<key>`` by anyone,
-not only this engine. The history file is a cache/index only - timing and
-task-runner run ids for the timeline view, which beads itself has no concept
-of - and is fully reconstructible (modulo exact timestamps) by replaying the
-label and comment history on the issue if it is ever lost or deleted.
+The phase getter/setter and the gate/recommendation comment readers below
+are thin dispatch wrappers to this project's configured tracker client (see
+kiro_crew.board.tracker) - a Jira-backed project reads/writes its phase and
+comments through Jira instead, behind the exact same functions.
+
+For beads specifically, beads remains the source of truth for phase, by
+design: ``phase:<key>`` is a plain beads label, readable with ``bd list
+--label phase:<key>`` by anyone, not only this engine.
+
+The history file below is NOT tracker-specific - it's a cache/index only
+(timing and task-runner run ids for the timeline view, which no tracker has
+a concept of) and is fully reconstructible (modulo exact timestamps) by
+replaying the label/comment history on the issue if it is ever lost or
+deleted. It stays here, unchanged, for every project regardless of tracker.
 """
 
 from __future__ import annotations
@@ -20,11 +29,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from kiro_crew.apps.builtins.board.backend.bd_cli import run_bd
+from kiro_crew.board import tracker
+from kiro_crew.board.tracker.config import config_for_path
 
 logger = logging.getLogger(__name__)
 
-_LABEL_PREFIX = "phase:"
 _HISTORY_SUBDIR = Path(".kiro") / "crew" / "board"
 
 
@@ -113,32 +122,13 @@ def save_history(project_path: str, story_id: str, data: dict) -> None:
 
 async def get_phase(project_path: str, story_id: str) -> str | None:
     """Current phase key, or None (= backlog, no phase label yet)."""
-    rows = await run_bd(project_path, "list", "--all", "--limit", "0", "--id", story_id)
-    if not isinstance(rows, list) or not rows:
-        return None
-    labels = rows[0].get("labels") or []
-    for label in labels:
-        if isinstance(label, str) and label.startswith(_LABEL_PREFIX):
-            return label[len(_LABEL_PREFIX):]
-    return None
+    config = await config_for_path(project_path)
+    return await tracker.client_for(config).get_phase(config, story_id)
 
 
 async def set_phase(project_path: str, story_id: str, new_phase: str) -> bool:
-    """Swap the story's `phase:*` label for `phase:<new_phase>`. Removes
-    every existing phase:* label first (there should only ever be one, but a
-    hand-edited issue could carry a stale extra one - this makes the engine
-    self-healing rather than silently picking an arbitrary one later)."""
-    rows = await run_bd(project_path, "list", "--all", "--limit", "0", "--id", story_id)
-    existing = []
-    if isinstance(rows, list) and rows:
-        existing = [
-            label for label in (rows[0].get("labels") or [])
-            if isinstance(label, str) and label.startswith(_LABEL_PREFIX)
-        ]
-    for label in existing:
-        await run_bd(project_path, "label", "remove", story_id, label)
-    result = await run_bd(project_path, "label", "add", story_id, f"{_LABEL_PREFIX}{new_phase}")
-    return result is not None
+    config = await config_for_path(project_path)
+    return await tracker.client_for(config).set_phase(config, story_id, new_phase)
 
 
 async def last_gate_comment(project_path: str, story_id: str) -> str | None:
@@ -146,18 +136,8 @@ async def last_gate_comment(project_path: str, story_id: str) -> str | None:
     the issue, in chronological order - the exact semantics of
     `bd comments <id> | grep '^GATE:' | tail -1` that rocket-gate-check.sh
     (and rocket-dag.sh's gate() function) already use."""
-    comments = await run_bd(project_path, "comments", story_id)
-    if not isinstance(comments, list):
-        return None
-    last: str | None = None
-    for comment in comments:
-        text = comment.get("text") if isinstance(comment, dict) else None
-        if not isinstance(text, str):
-            continue
-        for line in text.splitlines():
-            if line.startswith("GATE:"):
-                last = line
-    return last
+    config = await config_for_path(project_path)
+    return await tracker.client_for(config).last_gate_comment(config, story_id)
 
 
 def gate_passed(gate_line: str | None) -> bool:
@@ -169,10 +149,10 @@ _RECOMMENDATION_PREFIX = "RECOMMENDATION:"
 
 def last_recommendation_in_comments(comments: list) -> str | None:
     """The pure parsing half of last_recommendation_comment, split out so a
-    caller that already fetched a story's comments (e.g. stories.py's
-    list_stories, batching every story's `bd comments` call together rather
-    than issuing a second one per story here) can reuse it without another
-    subprocess round-trip."""
+    caller that already fetched a story's comments (e.g.
+    tracker.beads_client's list_stories, batching every story's `bd
+    comments` call together rather than issuing a second one per story
+    here) can reuse it without another subprocess round-trip."""
     last: str | None = None
     for comment in comments:
         text = comment.get("text") if isinstance(comment, dict) else None
@@ -193,7 +173,5 @@ async def last_recommendation_comment(project_path: str, story_id: str) -> str |
     never acts on it by itself (see board/engine.py's resume_pipeline_at /
     resume_pipeline_from_start, both triggered by an explicit board click,
     never by this function)."""
-    comments = await run_bd(project_path, "comments", story_id)
-    if not isinstance(comments, list):
-        return None
-    return last_recommendation_in_comments(comments)
+    config = await config_for_path(project_path)
+    return await tracker.client_for(config).last_recommendation_comment(config, story_id)

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from kiro_crew.board import stories as board_stories
+from kiro_crew.board.tracker import beads_client
 
 
 @pytest.mark.asyncio
@@ -19,7 +20,7 @@ async def test_lists_only_task_type_issues_with_a_parent(tmp_path):
          "parent": "epic-1", "status": "open"},
         {"id": "orphan-task", "title": "No parent", "issue_type": "task", "status": "open"},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert [s.id for s in summaries] == ["epic-1.1"]
     assert summaries[0].epic_title == "Epic"
@@ -42,7 +43,7 @@ async def test_excludes_a_grape_sub_task_parented_to_a_story_not_an_epic(tmp_pat
         {"id": "epic-1.1.1", "title": "Grape 1: do the thing", "issue_type": "task",
          "parent": "epic-1.1", "status": "open"},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert [s.id for s in summaries] == ["epic-1.1"]
 
@@ -54,7 +55,7 @@ async def test_reads_phase_from_label(tmp_path):
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
          "parent": "epic-1", "status": "open", "labels": ["phase:pipeline"]},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].phase == "pipeline"
     assert summaries[0].phase_label == "Pipeline"
@@ -67,7 +68,7 @@ async def test_carries_priority_and_owner_through(tmp_path):
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
          "parent": "epic-1", "status": "open", "priority": 1, "owner": "amaan"},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].priority == 1
     assert summaries[0].owner == "amaan"
@@ -80,7 +81,7 @@ async def test_missing_priority_and_owner_default_sanely(tmp_path):
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
          "parent": "epic-1", "status": "open"},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].priority is None
     assert summaries[0].owner == ""
@@ -106,7 +107,7 @@ async def test_flags_pending_open_questions_in_pipeline_phase(tmp_path):
             return comments
         raise AssertionError(f"unexpected bd call: {args}")
 
-    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd):
+    with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].pending_open_questions is True
 
@@ -130,7 +131,7 @@ async def test_does_not_flag_once_answered(tmp_path):
             return comments
         raise AssertionError(f"unexpected bd call: {args}")
 
-    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd):
+    with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].pending_open_questions is False
 
@@ -154,9 +155,7 @@ async def test_does_not_check_open_questions_outside_pipeline(tmp_path):
             return []
         raise AssertionError(f"unexpected bd call: {args}")
 
-    from kiro_crew.board import state as board_state
-    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd), \
-         patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+    with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].pending_open_questions is False
     assert summaries[0].recommendation is None
@@ -177,7 +176,7 @@ async def test_does_not_check_recommendation_outside_review(tmp_path):
             return []
         raise AssertionError(f"unexpected bd call: {args}")
 
-    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd):
+    with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].recommendation is None
 
@@ -198,16 +197,14 @@ async def test_flags_pending_recommendation_in_review_phase(tmp_path):
             return comments
         raise AssertionError(f"unexpected bd call: {args}")
 
-    from kiro_crew.board import state as board_state
-    with patch.object(board_stories, "run_bd", side_effect=fake_run_bd), \
-         patch.object(board_state, "run_bd", side_effect=fake_run_bd):
+    with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].recommendation == "RECOMMENDATION: QUICK_FIX tweak the validator"
 
 
 @pytest.mark.asyncio
 async def test_bd_failure_returns_empty_list(tmp_path):
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=None)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=None)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries == []
 
@@ -230,7 +227,7 @@ async def test_a_stale_running_entry_self_heals_on_every_list_read(tmp_path):
         "history": [],
     })
 
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
 
     assert summaries[0].current_run is None
@@ -248,7 +245,7 @@ async def test_reads_timeline_scheduling_fields_from_due_at_and_metadata(tmp_pat
          "due_at": "2026-10-15T00:00:00Z",
          "metadata": {"start_date": "2026-10-01", "timeline_rank": 2.5, "story_points": 8}},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].start_date == "2026-10-01"
     assert summaries[0].due_date == "2026-10-15T00:00:00Z"
@@ -263,7 +260,7 @@ async def test_missing_scheduling_fields_default_to_none(tmp_path):
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
          "parent": "epic-1", "status": "open"},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].start_date is None
     assert summaries[0].due_date is None
@@ -279,7 +276,7 @@ async def test_a_non_numeric_rank_is_dropped_not_raised(tmp_path):
         {"id": "epic-1.1", "title": "Story A", "issue_type": "task",
          "parent": "epic-1", "status": "open", "metadata": {"timeline_rank": "not-a-number"}},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     assert summaries[0].rank is None
 
@@ -296,7 +293,7 @@ async def test_depends_on_excludes_the_parent_child_epic_link(tmp_path):
             {"issue_id": "epic-1.1", "depends_on_id": "epic-1.2", "type": "blocks"},
         ]},
     ]
-    with patch.object(board_stories, "run_bd", AsyncMock(return_value=rows)):
+    with patch.object(beads_client, "run_bd", AsyncMock(return_value=rows)):
         summaries = await board_stories.list_stories(str(tmp_path))
     story_a = next(s for s in summaries if s.id == "epic-1.1")
     assert story_a.depends_on == ["epic-1.2"]

@@ -27,7 +27,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from '@dnd-kit/utilities'
 import {
   GripVertical, CheckCircle2, AlertTriangle, Loader2, Check, X, CalendarPlus,
-  GanttChart, ChevronDown, ChevronRight, Wrench, Undo2, XCircle,
+  GanttChart, ChevronDown, ChevronRight, Wrench, Undo2, XCircle, Settings,
 } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -35,6 +35,7 @@ import { boardApi, type BoardStory, type PhaseDef } from './boardApi'
 import { needsHuman, NEEDS_HUMAN_LABEL_KEY } from './needsHuman'
 import { epicAccent } from './epicColor'
 import StoryModal from './StoryModal'
+import ProjectSettingsPanel from './ProjectSettingsPanel'
 import { i18nT } from '../../i18n/t'
 import { fmtDateFields, compareText } from '../../i18n/format'
 
@@ -631,6 +632,7 @@ function TimelineSkeleton() {
 export default function TimelinePage() {
   const queryClient = useQueryClient()
   const [openStory, setOpenStory] = useState<BoardStory | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [zoom, setZoom] = useState<Zoom>('week')
   const scale = useTimeScale(zoom)
 
@@ -728,21 +730,43 @@ export default function TimelinePage() {
             {i18nT('apps.board.title')}
           </h1>
           {storiesQuery.data && storiesQuery.data.project_paths.length === 0 && (
-            <div className="text-[13px] text-muted mt-1">{i18nT('apps.board.no_projects_configured')}</div>
+            <div className="text-[13px] text-muted mt-1 flex items-center gap-1.5">
+              {i18nT('apps.board.no_projects_configured')}
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="underline underline-offset-2 text-accent hover:opacity-80 cursor-pointer"
+                data-testid="timeline-open-settings-from-hint"
+              >
+                {i18nT('apps.board.open_settings')}
+              </button>
+            </div>
           )}
         </div>
-        <div className="flex items-center gap-0.5 bg-bg-elevated rounded-full p-0.5" data-testid="timeline-zoom-toggle">
-          {(['week', 'quarter'] as const).map(z => (
-            <button
-              key={z}
-              type="button"
-              onClick={() => setZoom(z)}
-              className={`text-[11px] px-3 py-1 rounded-full cursor-pointer transition-colors ${zoom === z ? 'bg-accent text-accent-fg' : 'text-muted hover:text-text'}`}
-              data-testid={`timeline-zoom-${z}`}
-            >
-              {i18nT(z === 'week' ? 'apps.board.zoom_week' : 'apps.board.zoom_quarter')}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0.5 bg-bg-elevated rounded-full p-0.5" data-testid="timeline-zoom-toggle">
+            {(['week', 'quarter'] as const).map(z => (
+              <button
+                key={z}
+                type="button"
+                onClick={() => setZoom(z)}
+                className={`text-[11px] px-3 py-1 rounded-full cursor-pointer transition-colors ${zoom === z ? 'bg-accent text-accent-fg' : 'text-muted hover:text-text'}`}
+                data-testid={`timeline-zoom-${z}`}
+              >
+                {i18nT(z === 'week' ? 'apps.board.zoom_week' : 'apps.board.zoom_quarter')}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="text-muted hover:text-text cursor-pointer p-1.5 rounded-md hover:bg-bg-hover transition-colors"
+            aria-label={i18nT('apps.board.settings')}
+            title={i18nT('apps.board.settings')}
+            data-testid="timeline-open-settings"
+          >
+            <Settings size={16} />
+          </button>
         </div>
       </div>
       {(phasesQuery.error || storiesQuery.error || updateMutation.error) && (
@@ -798,6 +822,7 @@ export default function TimelinePage() {
       {openStory && (
         <StoryModal story={openStory} phases={phasesQuery.data?.phases ?? []} onClose={() => setOpenStory(null)} />
       )}
+      <ProjectSettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

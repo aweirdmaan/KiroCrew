@@ -24,6 +24,13 @@ Homepage = "https://github.com/kirodotdev/KiroCrew"
 
 [project.scripts]
 kirocrew = "kiro_crew._bootstrap:main"
+# Deliberately NOT named "bd" - see kiro_crew.board.tracker.bd_shim's module
+# docstring. An operator who wants Jira-backed crew-rocket pipeline runs to
+# work must put a copy/symlink of this entry point, named exactly "bd",
+# earlier on PATH than the real beads binary for whatever environment
+# pipeline jobs inherit - a one-time environment setup step, not something
+# this package can force on its own.
+kirocrew-bd-shim = "kiro_crew.board.tracker.bd_shim.cli:main"
 
 [dependency-groups]
 # Pinned dev tool versions for reproducible CI. Bump as needed.

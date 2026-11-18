@@ -28,6 +28,7 @@ import pytest
 from kiro_crew.board import engine as board_engine
 from kiro_crew.board import state as board_state
 from kiro_crew.board.phases import PHASE_BY_KEY
+from kiro_crew.board.tracker import beads_client
 from kiro_crew.testing.wait import await_until
 
 
@@ -153,7 +154,7 @@ def beads():
 
 @pytest.fixture(autouse=True)
 def _patch_run_bd(beads):
-    with patch.object(board_state, "run_bd", beads.run_bd):
+    with patch.object(beads_client, "run_bd", beads.run_bd):
         yield
 
 

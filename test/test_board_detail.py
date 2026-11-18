@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from kiro_crew.board import detail as board_detail
+from kiro_crew.board.tracker import beads_client
 from kiro_crew.testing.synthetic_credentials import github_classic
 
 
@@ -24,7 +25,7 @@ def _issue(**overrides) -> list[dict]:
 class TestGetStoryDetail:
     @pytest.mark.asyncio
     async def test_returns_full_detail(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=_issue())):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=_issue())):
             detail = await board_detail.get_story_detail("/proj", "s-1")
         assert detail["id"] == "s-1"
         assert detail["description"] == "the why/what"
@@ -35,7 +36,7 @@ class TestGetStoryDetail:
     @pytest.mark.asyncio
     async def test_redacts_credentials_in_description_and_comments(self):
         secret = "token=" + github_classic()
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=_issue(
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=_issue(
             description=secret,
             comments=[{"id": "c1", "author": "a", "text": secret, "created_at": "t"}],
         ))):
@@ -45,13 +46,13 @@ class TestGetStoryDetail:
 
     @pytest.mark.asyncio
     async def test_bd_failure_returns_none(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=None)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=None)):
             detail = await board_detail.get_story_detail("/proj", "s-1")
         assert detail is None
 
     @pytest.mark.asyncio
     async def test_exposes_timeline_scheduling_fields(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=_issue(
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=_issue(
             due_at="2026-10-15T00:00:00Z",
             metadata={"start_date": "2026-10-01", "timeline_rank": 3, "story_points": 5},
             dependencies=[
@@ -68,7 +69,7 @@ class TestGetStoryDetail:
 
     @pytest.mark.asyncio
     async def test_missing_scheduling_fields_default_to_none(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=_issue())):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=_issue())):
             detail = await board_detail.get_story_detail("/proj", "s-1")
         assert detail["start_date"] is None
         assert detail["due_date"] is None
@@ -86,21 +87,21 @@ class TestAddComment:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             ok = await board_detail.add_comment("/proj", "s-1", "APPROVED")
         assert ok is True
         assert calls == [("comments", "add", "s-1", "APPROVED")]
 
     @pytest.mark.asyncio
     async def test_empty_text_is_not_posted(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
             ok = await board_detail.add_comment("/proj", "s-1", "   ")
         assert ok is False
         mocked.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_bd_failure_returns_false(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=None)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=None)):
             ok = await board_detail.add_comment("/proj", "s-1", "hello")
         assert ok is False
 
@@ -114,7 +115,7 @@ class TestUpdateStory:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             ok = await board_detail.update_story("/proj", "s-1", title="New title", description="New body")
         assert ok is True
         assert calls == [("update", "s-1", "--title", "New title", "--description", "New body")]
@@ -127,20 +128,20 @@ class TestUpdateStory:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             await board_detail.update_story("/proj", "s-1", description="Only this changed")
         assert calls == [("update", "s-1", "--description", "Only this changed")]
 
     @pytest.mark.asyncio
     async def test_no_fields_given_is_not_posted(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
             ok = await board_detail.update_story("/proj", "s-1")
         assert ok is False
         mocked.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_bd_failure_returns_false(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=None)):
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=None)):
             ok = await board_detail.update_story("/proj", "s-1", title="x")
         assert ok is False
 
@@ -152,7 +153,7 @@ class TestUpdateStory:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             await board_detail.update_story(
                 "/proj", "s-1", start_date="2026-10-01", due_date="2026-10-15", rank=2.5,
             )
@@ -170,7 +171,7 @@ class TestUpdateStory:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             await board_detail.update_story("/proj", "s-1", priority=1, story_points=5)
         assert calls == [(
             "update", "s-1", "--priority", "1",
@@ -187,14 +188,14 @@ class TestDependencies:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             ok = await board_detail.add_dependency("/proj", "s-1", "s-0")
         assert ok is True
         assert calls == [("dep", "add", "s-1", "s-0")]
 
     @pytest.mark.asyncio
     async def test_add_dependency_blank_id_is_not_posted(self):
-        with patch.object(board_detail, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
+        with patch.object(beads_client, "run_bd", AsyncMock(return_value=[{"status": "ok"}])) as mocked:
             ok = await board_detail.add_dependency("/proj", "s-1", "   ")
         assert ok is False
         mocked.assert_not_called()
@@ -207,7 +208,7 @@ class TestDependencies:
             calls.append(args)
             return [{"status": "ok"}]
 
-        with patch.object(board_detail, "run_bd", side_effect=fake_run_bd):
+        with patch.object(beads_client, "run_bd", side_effect=fake_run_bd):
             ok = await board_detail.remove_dependency("/proj", "s-1", "s-0")
         assert ok is True
         assert calls == [("dep", "remove", "s-1", "s-0")]

@@ -1424,6 +1424,8 @@
     "components.crewPrFacts.read": "On the work board, after a pull request's state tags: the time the app itself last looked the pull request up on GitHub ('read at 19:22'); {{time}} is a clock time.",
     "components.relayCrews.new_crew": "Small tag after a Team Crew's name in the Crew switcher: this Crew was just shared with the reader and they have not looked at it yet. An adjective about the Crew, not a button that creates one.",
     "apps.board.spec_why_label": "Label above the WHY textarea in a board spec's edit form - the motivation paragraph (why this matters, for whom), matching rocket-ideate's own WHY/WHAT convention, not an interrogative or a generic heading.",
-    "apps.board.view_dag": "Tab label in a board story's timeline, switching its job's task list to a dependency-graph (DAG) rendering - the acronym for directed acyclic graph, not a verb."
+    "apps.board.view_dag": "Tab label in a board story's timeline, switching its job's task list to a dependency-graph (DAG) rendering - the acronym for directed acyclic graph, not a verb.",
+    "apps.board.add_project_submit": "Submit button on the Project settings panel's 'add a project' form - commits the new project path (and, for Jira, its host/key) to the configured list. Imperative verb, same register as this panel's other buttons (Edit, Remove).",
+    "apps.board.jira_project_key_placeholder": "Placeholder text in the Jira project key input on the Project settings panel's add/edit form - a generic example Jira project key (all-caps short identifier like 'ABC' or 'ENG'), not a real project."
   }
 }

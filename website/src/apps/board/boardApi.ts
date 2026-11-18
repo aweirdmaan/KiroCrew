@@ -18,7 +18,7 @@ async function coreGet<T>(path: string): Promise<T> {
   return r.json() as Promise<T>
 }
 
-async function corePost<T>(path: string, body?: unknown, method: 'POST' | 'DELETE' = 'POST'): Promise<T> {
+async function corePost<T>(path: string, body?: unknown, method: 'POST' | 'DELETE' | 'PUT' = 'POST'): Promise<T> {
   const r = await fetch(`${CORE_API_BASE}${path}`, {
     method,
     credentials: 'same-origin',
@@ -111,6 +111,25 @@ export interface UpdateStoryFields {
   story_points?: number
 }
 
+/**
+ * One configured project this board schedules specs from — `GET`/`PUT
+ * /config`'s `project_paths` entries (see `apps/builtins/board/backend` for
+ * the authoritative shape; this mirrors it, not the other way round). A
+ * `beads` entry only ever needs `path`; a `jira` entry adds the fields that
+ * locate the Jira project. Jira CREDENTIALS are never part of this shape -
+ * they're resolved server-side from `jira_host` alone against
+ * `dashboard.jira_hosts`, so this config is safe to read/write unauthenticated
+ * the same way every other per-app config is.
+ */
+export interface ProjectConfigEntry {
+  type: 'beads' | 'jira'
+  path: string
+  jira_host?: string
+  jira_project_key?: string
+  story_points_field?: string
+  dependency_link_type?: string
+}
+
 export const boardApi = {
   phases: () => coreGet<{ phases: PhaseDef[] }>('/phases'),
   stories: () => coreGet<{ stories: BoardStory[]; project_paths: string[] }>('/stories'),
@@ -136,4 +155,13 @@ export const boardApi = {
       `/stories/${encodeURIComponent(storyId)}/dependencies/${encodeURIComponent(dependsOnId)}`,
       undefined, 'DELETE',
     ),
+  // Generic per-app config (apps_routes_listing.handle_app_config): `{}` when
+  // nothing has been saved yet, so callers default `project_paths` to `[]`
+  // rather than assuming the key is always present.
+  getConfig: () => coreGet<{ project_paths?: ProjectConfigEntry[] }>('/config'),
+  // Whole-array replace, matching the backend's whole-file-write contract -
+  // callers must read the current list, mutate it client-side, and PUT the
+  // full updated array back rather than sending a partial diff.
+  putConfig: (projectPaths: ProjectConfigEntry[]) =>
+    corePost<{ ok: boolean }>('/config', { project_paths: projectPaths }, 'PUT'),
 }

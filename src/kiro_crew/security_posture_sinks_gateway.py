@@ -1041,12 +1041,29 @@ _GATEWAY_SINKS: tuple[tuple[str, str, str], ...] = (
         "beside them are fixed constants.",
     ),
     (
-        "Board story detail",
-        "board/detail.py",
+        "Board story detail (beads)",
+        "board/tracker/beads_client.py",
         "A beads issue's description and every comment, on their way to the "
         "Timeline app's story detail modal. A pasted secret or exfiltration URL "
         "in an incident-discussion comment is redacted before it reaches the "
         "browser, the same way the Knowledge Library's beads sync redacts "
         "ingested issue content.",
+    ),
+    (
+        "Board story detail (Jira)",
+        "board/tracker/jira_client.py",
+        "Same redaction as the beads-backed story detail above, for a "
+        "Jira-backed project's issue description/comments - the tracker "
+        "differs, the leak risk (a pasted secret in an incident-discussion "
+        "comment) does not.",
+    ),
+    (
+        "bd-compatible shim (Jira dispatch)",
+        "board/tracker/bd_shim/dispatch_jira.py",
+        "A Jira issue's description, rendered to the plain-text `bd show` "
+        "output a rocket-* pipeline skill reads from stdout. Same leak risk as "
+        "the board story detail sinks above - a pasted secret in the issue "
+        "shouldn't reach an agent's transcript unredacted just because this "
+        "one exits through a CLI shim instead of the dashboard.",
     ),
 )

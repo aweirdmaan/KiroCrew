@@ -17,18 +17,16 @@ app (see ``issue_radar/backend/routes.py``). Route paths are namespaced under
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 from aiohttp import web
 
-from kiro_crew.apps.builtins.board.backend.bd_cli import run_bd
-from kiro_crew.apps.manager import app_data_dir
 from kiro_crew.board import detail as board_detail
 from kiro_crew.board import engine as board_engine
 from kiro_crew.board import state as board_state
 from kiro_crew.board.phases import PHASES
 from kiro_crew.board.stories import list_stories
+from kiro_crew.board.tracker.config import project_configs
 from kiro_crew.dashboard.handlers._shared_request_body import read_bounded_json
 from kiro_crew.dashboard.state import DashboardState
 
@@ -37,25 +35,10 @@ logger = logging.getLogger(__name__)
 _APP_NAME = "board"
 
 
-def _read_project_paths_sync() -> list[str]:
-    config_path = app_data_dir(_APP_NAME) / "config.json"
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return []
-    except (OSError, json.JSONDecodeError):
-        logger.warning("board: failed to read app config at %s", config_path, exc_info=True)
-        return []
-    if not isinstance(data, dict):
-        return []
-    paths = data.get("project_paths")
-    return [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
-
-
 async def _project_paths() -> list[str]:
     """Configured project paths, read off disk the same way
     ``handle_app_config``'s own GET does (off the event loop)."""
-    return await asyncio.to_thread(_read_project_paths_sync)
+    return [cfg.path for cfg in await project_configs()]
 
 
 async def _find_story_project(story_id: str) -> str | None:
@@ -73,8 +56,7 @@ async def _find_story_project(story_id: str) -> str | None:
     project's `bd` "do you have this id" once.
     """
     async def _has_story(project_path: str) -> str | None:
-        result = await run_bd(project_path, "show", "--id", story_id)
-        return project_path if isinstance(result, list) and result else None
+        return project_path if await board_detail.has_story(project_path, story_id) else None
 
     for found in await asyncio.gather(*(_has_story(p) for p in await _project_paths())):
         if found is not None:

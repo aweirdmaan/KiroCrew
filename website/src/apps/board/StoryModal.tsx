@@ -12,7 +12,7 @@
  */
 import { useMemo, useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle, Check, AlertTriangle, Loader2 } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, Eye, Pencil, Send, HelpCircle, Check, AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { Badge } from '../../components/ui'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -577,6 +577,55 @@ function CommentComposer({ storyId }: { storyId: string }) {
   );
 }
 
+/**
+ * On-demand refresh for the currently open story. Writes made through this
+ * UI already invalidate the relevant queries on success (see the mutations
+ * below), so this button exists for the case those can't: a Jira-backed
+ * project can change from someone editing directly in Jira, which this app
+ * never hears about until its own poll next happens to fire. Re-invalidating
+ * the detail/history/list queries forces an immediate refetch instead of
+ * waiting out `POLL_MS` - a plain pull, not a merge or conflict UI.
+ */
+function SyncButton({ storyId }: { storyId: string }) {
+  const queryClient = useQueryClient()
+  const [justSynced, setJustSynced] = useState(false)
+  const mutation = useMutation({
+    mutationFn: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['board', 'detail', storyId] }),
+      queryClient.invalidateQueries({ queryKey: ['board', 'history', storyId] }),
+      queryClient.invalidateQueries({ queryKey: ['board', 'stories'] }),
+    ]),
+    onSuccess: () => {
+      setJustSynced(true)
+      setTimeout(() => setJustSynced(false), 2000)
+    },
+  })
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={() => mutation.mutate()}
+        disabled={mutation.isPending}
+        className="cursor-pointer text-muted hover:text-text disabled:opacity-50"
+        title={i18nT('apps.board.sync_tooltip')}
+        aria-label={i18nT('apps.board.sync')}
+        data-testid="board-sync-button"
+      >
+        {mutation.isPending ? (
+          <Loader2 size={16} className="animate-spin" />
+        ) : justSynced ? (
+          <Check size={16} className="text-ok" data-testid="board-sync-success" />
+        ) : (
+          <RefreshCw size={16} />
+        )}
+      </button>
+      {mutation.isError && (
+        <span className="text-[10px] text-danger whitespace-nowrap">{i18nT('apps.board.sync_failed')}</span>
+      )}
+    </div>
+  );
+}
+
 const PRIORITY_LEVELS = [0, 1, 2, 3, 4]
 
 /** Jira-style right rail: epic (color-coded, same hash as the timeline's
@@ -802,9 +851,12 @@ export default function StoryModal({ story, phases, onClose }: {
               {detail?.owner && <span className="text-[11px] text-muted">{detail.owner}</span>}
             </div>
           </div>
-          <button type="button" onClick={onClose} className="cursor-pointer text-muted hover:text-text" data-testid="board-timeline-close">
-            <X size={18} />
-          </button>
+          <div className="flex items-start gap-3 shrink-0">
+            <SyncButton storyId={story.id} />
+            <button type="button" onClick={onClose} className="cursor-pointer text-muted hover:text-text" data-testid="board-timeline-close">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 flex gap-5">
