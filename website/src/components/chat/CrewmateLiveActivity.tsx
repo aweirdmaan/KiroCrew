@@ -60,7 +60,14 @@ export default function CrewmateLiveActivity({
   // opposite of the caption, so the bubble folds for those two phases too.
   const idlePhase = activity.kind === 'stopping' || activity.kind === 'compacting'
   const dotsShown = (!streamingText || streamQuiet) && !idlePhase
-  const label = activity.fullText ?? activity.text ?? t(PILL_ACTIVITY_KEY[activity.kind as Exclude<PillActivityKind, 'tool' | 'thinking'>])
+  // `text`/`fullText` ultimately trace back to an LLM-generated tool label (see
+  // `pillActivity.ts`): a malformed one can arrive as a nested object instead of
+  // a string, and rendering that raw as a child throws minified React #31 (the
+  // same class of bug `WelcomeView.tsx`'s `coerceSuggestionText` guards against).
+  const rawLabel = activity.fullText ?? activity.text
+  const label = typeof rawLabel === 'string' && rawLabel
+    ? rawLabel
+    : t(PILL_ACTIVITY_KEY[activity.kind as Exclude<PillActivityKind, 'tool' | 'thinking'>])
   return (
     <div
       data-testid="crewmate-live-activity"
